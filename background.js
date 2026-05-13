@@ -17,6 +17,7 @@ importScripts(
   'background/paypal-account-store.js',
   'background/ip-proxy-provider-711proxy.js',
   'background/ip-proxy-core.js',
+  'background/sub2api-api.js',
   'background/panel-bridge.js',
   'background/registration-email-state.js',
   'background/runtime-state.js',
@@ -927,6 +928,7 @@ const DEFAULT_STATE = {
   sub2apiSessionId: null, // SUB2API OpenAI Auth 会话 ID。
   sub2apiOAuthState: null, // SUB2API OpenAI Auth state。
   sub2apiGroupId: null, // SUB2API 目标分组 ID。
+  sub2apiGroupIds: [], // SUB2API 多目标分组 ID。
   sub2apiDraftName: null, // SUB2API 本轮预生成的账号名称。
   sub2apiProxyId: null, // SUB2API 本轮使用的代理 ID。
   codex2apiSessionId: null, // Codex2API OAuth 会话 ID。
@@ -8270,7 +8272,9 @@ function getDownstreamStateResets(step, state = {}) {
       sub2apiSessionId: null,
       sub2apiOAuthState: null,
       sub2apiGroupId: null,
+      sub2apiGroupIds: [],
       sub2apiDraftName: null,
+      sub2apiProxyId: null,
       codex2apiSessionId: null,
       codex2apiOAuthState: null,
       flowStartTime: null,
@@ -11849,6 +11853,7 @@ const step10Executor = self.MultiPageBackgroundStep10?.createStep10Executor({
   sendToContentScript,
   sendToContentScriptResilient,
   shouldBypassStep9ForLocalCpa,
+  DEFAULT_SUB2API_GROUP_NAME,
   SUB2API_STEP9_RESPONSE_TIMEOUT_MS,
 });
 const stepExecutorsByKey = {
