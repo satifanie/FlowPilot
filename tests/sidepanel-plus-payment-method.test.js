@@ -80,8 +80,10 @@ const window = {
     },
   },
 };
+let latestState = {};
 let currentPlusModeEnabled = false;
 let currentPlusPaymentMethod = 'paypal';
+let currentPhoneVerificationEnabled = false;
 let currentSignupMethod = 'email';
 const DEFAULT_SIGNUP_METHOD = 'email';
 let stepDefinitions = [];
@@ -106,9 +108,163 @@ return {
   assert.deepEqual(api.getStepIds(), [7]);
   assert.deepEqual(api.calls[0], {
     type: 'getSteps',
-    options: { activeFlowId: 'openai', plusModeEnabled: true, plusPaymentMethod: 'gopay', signupMethod: 'email' },
+    options: { activeFlowId: 'openai', phoneVerificationEnabled: false, plusModeEnabled: true, plusPaymentMethod: 'gopay', signupMethod: 'email' },
   });
   assert.deepEqual(api.calls[1], { type: 'render', stepIds: [7] });
+});
+
+test('sidepanel display-only phone verification step is email signup only', () => {
+  const bundle = [
+    extractFunction('normalizeSignupMethod'),
+    extractFunction('shouldShowDisplayPhoneVerificationStep'),
+    extractFunction('getDisplayStepDefinitions'),
+  ].join('\n');
+
+  const api = new Function(`
+const DISPLAY_PHONE_VERIFICATION_STEP_KEY = 'phone-verification';
+const DISPLAY_PHONE_VERIFICATION_TITLE = '\\u624b\\u673a\\u53f7\\u9a8c\\u8bc1';
+const DISPLAY_PHONE_VERIFICATION_BEFORE_STEP_KEY = 'confirm-oauth';
+const SIGNUP_METHOD_EMAIL = 'email';
+const SIGNUP_METHOD_PHONE = 'phone';
+const DEFAULT_SIGNUP_METHOD = SIGNUP_METHOD_EMAIL;
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+let latestState = {};
+let currentPhoneVerificationEnabled = false;
+let currentSignupMethod = 'email';
+let stepDefinitions = [];
+${bundle}
+return {
+  getDisplayStepDefinitions,
+  shouldShowDisplayPhoneVerificationStep,
+};
+`)();
+
+  const baseSteps = [
+    { id: 7, order: 70, key: 'oauth-login', title: 'OAuth' },
+    { id: 8, order: 80, key: 'fetch-login-code', title: 'Login code' },
+    { id: 9, order: 90, key: 'confirm-oauth', title: 'Confirm OAuth' },
+    { id: 10, order: 100, key: 'platform-verify', title: 'Platform verify' },
+  ];
+
+  const emailDisplaySteps = api.getDisplayStepDefinitions(baseSteps, {
+    phoneVerificationEnabled: true,
+    signupMethod: 'email',
+  });
+  assert.deepEqual(
+    emailDisplaySteps.map((step) => step.key),
+    ['oauth-login', 'fetch-login-code', 'phone-verification', 'confirm-oauth', 'platform-verify']
+  );
+  assert.deepEqual(
+    emailDisplaySteps.map((step) => step.displayStepId),
+    [7, 8, 9, 10, 11]
+  );
+  assert.deepEqual(
+    emailDisplaySteps.filter((step) => !step.displayOnly).map((step) => step.executableStepId),
+    [7, 8, 9, 10]
+  );
+  assert.equal(emailDisplaySteps[2].displayOnly, true);
+  assert.equal(emailDisplaySteps[2].executableStepId, '');
+
+  assert.equal(api.shouldShowDisplayPhoneVerificationStep({
+    phoneVerificationEnabled: true,
+    signupMethod: 'email',
+  }), true);
+  assert.equal(api.shouldShowDisplayPhoneVerificationStep({
+    phoneVerificationEnabled: false,
+    signupMethod: 'email',
+  }), false);
+  assert.equal(api.shouldShowDisplayPhoneVerificationStep({
+    phoneVerificationEnabled: true,
+    signupMethod: 'phone',
+  }), false);
+  assert.equal(api.getDisplayStepDefinitions(baseSteps, {
+    phoneVerificationEnabled: true,
+    signupMethod: 'phone',
+  }).some((step) => step.key === 'phone-verification'), false);
+});
+
+test('sidepanel phone verification display changes without changing executable step ids', () => {
+  const bundle = [
+    extractFunction('normalizeSignupMethod'),
+    extractFunction('normalizePlusPaymentMethod'),
+    extractFunction('getStepDefinitionsForMode'),
+    extractFunction('shouldShowDisplayPhoneVerificationStep'),
+    extractFunction('getDisplayStepDefinitions'),
+    extractFunction('rebuildStepDefinitionState'),
+    extractFunction('syncStepDefinitionsForMode'),
+  ].join('\n');
+
+  const api = new Function(`
+const calls = [];
+const DISPLAY_PHONE_VERIFICATION_STEP_KEY = 'phone-verification';
+const DISPLAY_PHONE_VERIFICATION_TITLE = '\\u624b\\u673a\\u53f7\\u9a8c\\u8bc1';
+const DISPLAY_PHONE_VERIFICATION_BEFORE_STEP_KEY = 'confirm-oauth';
+const SIGNUP_METHOD_EMAIL = 'email';
+const SIGNUP_METHOD_PHONE = 'phone';
+const DEFAULT_SIGNUP_METHOD = SIGNUP_METHOD_EMAIL;
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+const window = {
+  MultiPageStepDefinitions: {
+    getSteps(options) {
+      calls.push({ type: 'getSteps', options });
+      return [
+        { id: 8, order: 80, key: 'fetch-login-code', title: 'Login code' },
+        { id: 9, order: 90, key: 'confirm-oauth', title: 'Confirm OAuth' },
+        { id: 10, order: 100, key: 'platform-verify', title: 'Platform verify' },
+      ];
+    },
+    getPlusPaymentStepTitle() {
+      return '';
+    },
+  },
+};
+let latestState = { phoneVerificationEnabled: false };
+let currentPlusModeEnabled = false;
+let currentPlusPaymentMethod = 'paypal';
+let currentPhoneVerificationEnabled = false;
+let currentSignupMethod = 'email';
+let stepDefinitions = [];
+let STEP_IDS = [];
+let STEP_DEFAULT_STATUSES = {};
+let SKIPPABLE_STEPS = new Set();
+function getSelectedPlusPaymentMethod() { return 'paypal'; }
+function renderStepsList() {
+  calls.push({
+    type: 'render',
+    displayKeys: getDisplayStepDefinitions().map((step) => step.key),
+    displayStepIds: getDisplayStepDefinitions().map((step) => step.displayStepId),
+    stepIds: [...STEP_IDS],
+  });
+}
+${bundle}
+return {
+  calls,
+  syncStepDefinitionsForMode,
+};
+`)();
+
+  api.syncStepDefinitionsForMode(false, {
+    phoneVerificationEnabled: false,
+    render: true,
+    signupMethod: 'email',
+  });
+  api.syncStepDefinitionsForMode(false, {
+    phoneVerificationEnabled: true,
+    render: true,
+    signupMethod: 'email',
+  });
+  api.syncStepDefinitionsForMode(false, {
+    phoneVerificationEnabled: true,
+    render: true,
+    signupMethod: 'phone',
+  });
+
+  const renders = api.calls.filter((entry) => entry.type === 'render');
+  assert.deepEqual(renders[0].stepIds, [8, 9, 10]);
+  assert.deepEqual(renders[1].stepIds, [8, 9, 10]);
+  assert.deepEqual(renders[1].displayKeys, ['fetch-login-code', 'phone-verification', 'confirm-oauth', 'platform-verify']);
+  assert.deepEqual(renders[1].displayStepIds, [8, 9, 10, 11]);
+  assert.deepEqual(renders[2].displayKeys, ['fetch-login-code', 'confirm-oauth', 'platform-verify']);
 });
 
 test('sidepanel normalizeSignupMethod stays independent from signup constants during bootstrap', () => {
@@ -128,7 +284,8 @@ test('sidepanel initializes latestState before bootstrapping shared step definit
 test('sidepanel signup method UI syncs shared step definitions with the selected signup method', () => {
   const source = extractFunction('updateSignupMethodUI');
   assert.match(source, /syncStepDefinitionsForMode\(/);
-  assert.match(source, /signupMethod:\s*selectedMethod/);
+  assert.match(source, /phoneVerificationEnabled:\s*stepDefinitionState\.phoneVerificationEnabled/);
+  assert.match(source, /signupMethod:\s*stepDefinitionState\.signupMethod/);
 });
 
 test('sidepanel applies restored signup method when rebuilding shared step definitions on load', () => {
@@ -249,8 +406,10 @@ const window = {
     },
   },
 };
+let latestState = {};
 let currentPlusModeEnabled = false;
 let currentPlusPaymentMethod = 'paypal';
+let currentPhoneVerificationEnabled = false;
 let currentSignupMethod = 'email';
 const DEFAULT_SIGNUP_METHOD = 'email';
 let stepDefinitions = [];
@@ -275,7 +434,7 @@ return {
   assert.deepEqual(api.getStepIds(), [13]);
   assert.deepEqual(api.calls[0], {
     type: 'getSteps',
-    options: { activeFlowId: 'openai', plusModeEnabled: true, plusPaymentMethod: 'gpc-helper', signupMethod: 'email' },
+    options: { activeFlowId: 'openai', phoneVerificationEnabled: false, plusModeEnabled: true, plusPaymentMethod: 'gpc-helper', signupMethod: 'email' },
   });
 });
 

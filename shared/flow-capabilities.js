@@ -229,6 +229,7 @@
         stepDefinitionOptions: {
           activeFlowId,
           panelMode: effectivePanelMode,
+          phoneVerificationEnabled: runtimeLocks.phoneVerificationEnabled,
           plusModeEnabled: runtimeLocks.plusModeEnabled,
           signupMethod: effectiveSignupMethod,
         },

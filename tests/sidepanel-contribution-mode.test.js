@@ -161,6 +161,24 @@ const document = {
   },
 };
 const stepsProgress = { textContent: '' };
+function getDisplayStepDefinitions() {
+  return STEP_IDS.map((step) => ({
+    id: step,
+    executableStepId: step,
+    displayStepId: step,
+    displayOnly: false,
+  }));
+}
+function getDisplayStepStatus(step, statuses = getStepStatuses()) {
+  return statuses?.[Number(step?.executableStepId || step?.id)] || 'pending';
+}
+function getDisplayStepProgress(state = latestState) {
+  const statuses = getStepStatuses(state);
+  const displaySteps = getDisplayStepDefinitions();
+  const completed = displaySteps.filter((step) => isDoneStatus(getDisplayStepStatus(step, statuses))).length;
+  return { completed, total: displaySteps.length };
+}
+function renderDisplayOnlyStepStatus() {}
 ${bundle}
 return { renderStepStatuses, rows, statusEls, stepsProgress };
 `)();

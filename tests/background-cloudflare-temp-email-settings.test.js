@@ -201,6 +201,7 @@ function normalizePhoneCodeTimeoutWindows(value) { return Number(value) || 2; }
 function normalizePhoneCodePollIntervalSeconds(value) { return Number(value) || 5; }
 function normalizePhoneCodePollMaxRounds(value) { return Number(value) || 4; }
 function resolveLegacyAutoStepDelaySeconds() { return undefined; }
+function resolveSignupMethod(state = {}) { return String(state?.signupMethod || '').trim().toLowerCase() === 'phone' ? 'phone' : 'email'; }
 ${extractFunction('normalizePersistentSettingValue')}
 ${extractFunction('buildPersistentSettingsPayload')}
 return {

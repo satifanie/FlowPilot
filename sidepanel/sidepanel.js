@@ -518,9 +518,13 @@ const SIGNUP_METHOD_EMAIL = 'email';
 const SIGNUP_METHOD_PHONE = 'phone';
 const DEFAULT_SIGNUP_METHOD = SIGNUP_METHOD_EMAIL;
 const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+const DISPLAY_PHONE_VERIFICATION_STEP_KEY = 'phone-verification';
+const DISPLAY_PHONE_VERIFICATION_TITLE = '\u624b\u673a\u53f7\u9a8c\u8bc1';
+const DISPLAY_PHONE_VERIFICATION_BEFORE_STEP_KEY = 'confirm-oauth';
 let latestState = null;
 let currentPlusModeEnabled = false;
 let currentPlusPaymentMethod = DEFAULT_PLUS_PAYMENT_METHOD;
+let currentPhoneVerificationEnabled = false;
 let currentSignupMethod = DEFAULT_SIGNUP_METHOD;
 let lastConfirmedOperationDelayEnabled = true;
 let heroSmsCountrySelectionOrder = [];
@@ -539,6 +543,7 @@ let nexSmsCountrySelectionOrder = [];
 let nexSmsCountryMenuSearchKeyword = '';
 const nexSmsCountrySearchTextById = new Map();
 let stepDefinitions = getStepDefinitionsForMode(false, {
+  phoneVerificationEnabled: currentPhoneVerificationEnabled,
   plusPaymentMethod: currentPlusPaymentMethod,
   signupMethod: currentSignupMethod,
 });
@@ -795,6 +800,15 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
   const rawPaymentMethod = typeof options === 'string'
     ? options
     : (options.plusPaymentMethod || currentPlusPaymentMethod || defaultMethod);
+  const rawPhoneVerificationEnabled = typeof options === 'string'
+    ? currentPhoneVerificationEnabled
+    : (Object.prototype.hasOwnProperty.call(options || {}, 'phoneVerificationEnabled')
+      ? options.phoneVerificationEnabled
+      : (
+        typeof inputPhoneVerificationEnabled !== 'undefined' && inputPhoneVerificationEnabled
+          ? inputPhoneVerificationEnabled.checked
+          : (typeof latestState !== 'undefined' ? latestState?.phoneVerificationEnabled : currentPhoneVerificationEnabled)
+      ));
   const rawSignupMethod = typeof options === 'string'
     ? currentSignupMethod
     : (options.signupMethod || currentSignupMethod || DEFAULT_SIGNUP_METHOD);
@@ -803,6 +817,7 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
     : (options.activeFlowId || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '') || defaultFlowId);
   return (window.MultiPageStepDefinitions?.getSteps?.({
     activeFlowId: String(activeFlowId || '').trim().toLowerCase() || defaultFlowId,
+    phoneVerificationEnabled: Boolean(rawPhoneVerificationEnabled),
     plusModeEnabled,
     plusPaymentMethod: normalizePlusPaymentMethod(rawPaymentMethod),
     signupMethod: normalizeSignupMethod(rawSignupMethod),
@@ -813,6 +828,67 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
       if (leftOrder !== rightOrder) return leftOrder - rightOrder;
       return left.id - right.id;
     });
+}
+
+function shouldShowDisplayPhoneVerificationStep(options = {}) {
+  const defaultFlowId = typeof DEFAULT_ACTIVE_FLOW_ID !== 'undefined' ? DEFAULT_ACTIVE_FLOW_ID : 'openai';
+  const activeFlowId = String(
+    options.activeFlowId
+    || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '')
+    || defaultFlowId
+  ).trim().toLowerCase() || defaultFlowId;
+  const phoneVerificationEnabled = Object.prototype.hasOwnProperty.call(options || {}, 'phoneVerificationEnabled')
+    ? Boolean(options.phoneVerificationEnabled)
+    : Boolean(currentPhoneVerificationEnabled);
+  const signupMethod = normalizeSignupMethod(options.signupMethod || currentSignupMethod || DEFAULT_SIGNUP_METHOD);
+  return activeFlowId === defaultFlowId
+    && phoneVerificationEnabled
+    && signupMethod === SIGNUP_METHOD_EMAIL;
+}
+
+function getDisplayStepDefinitions(steps = stepDefinitions, options = {}) {
+  const baseSteps = Array.isArray(steps) ? steps : [];
+  const shouldShowPhoneStep = shouldShowDisplayPhoneVerificationStep({
+    activeFlowId: options.activeFlowId,
+    phoneVerificationEnabled: Object.prototype.hasOwnProperty.call(options || {}, 'phoneVerificationEnabled')
+      ? options.phoneVerificationEnabled
+      : currentPhoneVerificationEnabled,
+    signupMethod: options.signupMethod || currentSignupMethod,
+  });
+  const displaySteps = [];
+  let insertedPhoneStep = false;
+  let displayOffset = 0;
+
+  baseSteps.forEach((step) => {
+    const stepId = Number(step?.id);
+    const isInsertPoint = shouldShowPhoneStep
+      && !insertedPhoneStep
+      && String(step?.key || '') === DISPLAY_PHONE_VERIFICATION_BEFORE_STEP_KEY;
+
+    if (isInsertPoint) {
+      const previousExecutableStep = displaySteps.slice().reverse().find((entry) => !entry.displayOnly);
+      displaySteps.push({
+        displayOnly: true,
+        displayStepId: Number.isFinite(stepId) ? stepId : '',
+        executableStepId: '',
+        id: `${stepId || 'virtual'}:${DISPLAY_PHONE_VERIFICATION_STEP_KEY}`,
+        key: DISPLAY_PHONE_VERIFICATION_STEP_KEY,
+        previousExecutableStepId: Number(previousExecutableStep?.executableStepId) || 0,
+        title: DISPLAY_PHONE_VERIFICATION_TITLE,
+      });
+      insertedPhoneStep = true;
+      displayOffset = 1;
+    }
+
+    displaySteps.push({
+      ...step,
+      displayOnly: false,
+      displayStepId: Number.isFinite(stepId) ? stepId + displayOffset : step?.id,
+      executableStepId: stepId,
+    });
+  });
+
+  return displaySteps;
 }
 
 function getStepIdByKeyForCurrentMode(stepKey = '') {
@@ -830,13 +906,20 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
   const rawPaymentMethod = typeof options === 'string'
     ? options
     : (options.plusPaymentMethod || currentPlusPaymentMethod || defaultMethod);
+  const rawPhoneVerificationEnabled = typeof options === 'string'
+    ? currentPhoneVerificationEnabled
+    : (Object.prototype.hasOwnProperty.call(options || {}, 'phoneVerificationEnabled')
+      ? options.phoneVerificationEnabled
+      : currentPhoneVerificationEnabled);
   const rawSignupMethod = typeof options === 'string'
     ? currentSignupMethod
     : (options.signupMethod || currentSignupMethod || DEFAULT_SIGNUP_METHOD);
   currentPlusPaymentMethod = normalizePlusPaymentMethod(rawPaymentMethod);
+  currentPhoneVerificationEnabled = Boolean(rawPhoneVerificationEnabled);
   currentSignupMethod = normalizeSignupMethod(rawSignupMethod);
   stepDefinitions = getStepDefinitionsForMode(currentPlusModeEnabled, {
     activeFlowId: options?.activeFlowId,
+    phoneVerificationEnabled: currentPhoneVerificationEnabled,
     plusPaymentMethod: currentPlusPaymentMethod,
     signupMethod: currentSignupMethod,
   });
@@ -7339,6 +7422,9 @@ function resolveStepDefinitionCapabilityState(state = latestState, options = {})
     ...(state || {}),
     ...(options?.state || {}),
   };
+  if (Object.prototype.hasOwnProperty.call(options || {}, 'phoneVerificationEnabled')) {
+    nextState.phoneVerificationEnabled = options.phoneVerificationEnabled;
+  }
   const capabilityState = resolveCurrentSidepanelCapabilities({
     activeFlowId: options?.activeFlowId ?? nextState?.activeFlowId,
     panelMode: options?.panelMode ?? nextState?.panelMode,
@@ -7347,6 +7433,9 @@ function resolveStepDefinitionCapabilityState(state = latestState, options = {})
   });
   return {
     capabilityState,
+    phoneVerificationEnabled: capabilityState
+      ? Boolean(capabilityState.runtimeLocks?.phoneVerificationEnabled)
+      : Boolean(nextState?.phoneVerificationEnabled),
     plusModeEnabled: capabilityState
       ? Boolean(capabilityState.runtimeLocks?.plusModeEnabled)
       : Boolean(nextState?.plusModeEnabled),
@@ -7473,6 +7562,7 @@ function updateSignupMethodUI(options = {}) {
   const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
     ? resolveStepDefinitionCapabilityState({
       ...(latestState || {}),
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: typeof inputPlusModeEnabled !== 'undefined' && inputPlusModeEnabled
         ? Boolean(inputPlusModeEnabled.checked)
         : Boolean(latestState?.plusModeEnabled),
@@ -7481,14 +7571,16 @@ function updateSignupMethodUI(options = {}) {
       signupMethod: selectedMethod,
     })
     : {
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: typeof inputPlusModeEnabled !== 'undefined' && inputPlusModeEnabled
         ? Boolean(inputPlusModeEnabled.checked)
         : Boolean(latestState?.plusModeEnabled),
       signupMethod: selectedMethod,
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+    phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
     plusPaymentMethod: getSelectedPlusPaymentMethod(latestState),
-    signupMethod: selectedMethod,
+    signupMethod: stepDefinitionState.signupMethod,
   });
   if (typeof syncSignupPhoneInputFromState === 'function') {
     syncSignupPhoneInputFromState(latestState);
@@ -8477,6 +8569,9 @@ function applyAutoRunStatus(payload = currentAutoRun) {
 
 function initializeManualStepActions() {
   document.querySelectorAll('.step-row').forEach((row) => {
+    if (row.dataset.displayOnly === 'true') {
+      return;
+    }
     if (row.querySelector('.step-actions')) {
       return;
     }
@@ -8512,16 +8607,25 @@ function initializeManualStepActions() {
 function renderStepsList() {
   if (!stepsList) return;
 
-  stepsList.innerHTML = stepDefinitions.map((step) => `
-    <div class="step-row" data-step="${step.id}" data-step-key="${escapeHtml(step.key)}">
-      <div class="step-indicator" data-step="${step.id}"><span class="step-num">${step.id}</span></div>
-      <button class="step-btn" data-step="${step.id}" data-step-key="${escapeHtml(step.key)}">${escapeHtml(step.title)}</button>
-      <span class="step-status" data-step="${step.id}"></span>
+  const displaySteps = getDisplayStepDefinitions();
+  stepsList.innerHTML = displaySteps.map((step) => {
+    const displayOnly = Boolean(step.displayOnly);
+    const executableStepId = displayOnly ? '' : String(step.executableStepId || step.id || '');
+    const displayStepId = String(step.displayStepId || step.id || '');
+    const disabledAttrs = displayOnly
+      ? ' disabled aria-disabled="true" tabindex="-1"'
+      : '';
+    return `
+    <div class="step-row${displayOnly ? ' step-display-only' : ''}" data-step="${escapeHtml(executableStepId)}" data-step-key="${escapeHtml(step.key)}" data-display-step-id="${escapeHtml(displayStepId)}" data-display-only="${displayOnly ? 'true' : 'false'}">
+      <div class="step-indicator" data-step="${escapeHtml(executableStepId)}"><span class="step-num">${escapeHtml(displayStepId)}</span></div>
+      <button class="step-btn" data-step="${escapeHtml(executableStepId)}" data-step-key="${escapeHtml(step.key)}" data-display-only="${displayOnly ? 'true' : 'false'}"${disabledAttrs}>${escapeHtml(step.title)}</button>
+      <span class="step-status" data-step="${escapeHtml(executableStepId)}" data-display-step-id="${escapeHtml(displayStepId)}"></span>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   if (stepsProgress) {
-    stepsProgress.textContent = `0 / ${STEP_IDS.length}`;
+    stepsProgress.textContent = `0 / ${displaySteps.length}`;
   }
 
   initializeManualStepActions();
@@ -8538,6 +8642,13 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
   const rawPaymentMethod = typeof plusPaymentMethodOrOptions === 'string'
     ? plusPaymentMethodOrOptions
     : (options.plusPaymentMethod || getSelectedPlusPaymentMethod(latestState));
+  const nextPhoneVerificationEnabled = Object.prototype.hasOwnProperty.call(options, 'phoneVerificationEnabled')
+    ? Boolean(options.phoneVerificationEnabled)
+    : (
+      typeof inputPhoneVerificationEnabled !== 'undefined' && inputPhoneVerificationEnabled
+        ? Boolean(inputPhoneVerificationEnabled.checked)
+        : Boolean(latestState?.phoneVerificationEnabled)
+    );
   const nextSignupMethod = normalizeSignupMethod(options.signupMethod || currentSignupMethod || DEFAULT_SIGNUP_METHOD);
   const nextPaymentMethod = normalizePlusPaymentMethod(rawPaymentMethod);
   const nextActiveFlowId = String(
@@ -8549,6 +8660,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
   const currentPaymentStep = stepDefinitions.find((step) => step.key === 'paypal-approve');
   const nextPaymentTitle = rootScope.MultiPageStepDefinitions?.getPlusPaymentStepTitle?.({
     activeFlowId: nextActiveFlowId,
+    phoneVerificationEnabled: nextPhoneVerificationEnabled,
     plusModeEnabled: nextPlusModeEnabled,
     plusPaymentMethod: nextPaymentMethod,
     signupMethod: nextSignupMethod,
@@ -8557,6 +8669,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
   const shouldRender = Boolean(options.render)
     || nextPlusModeEnabled !== currentPlusModeEnabled
     || nextPaymentMethod !== currentPlusPaymentMethod
+    || nextPhoneVerificationEnabled !== currentPhoneVerificationEnabled
     || nextSignupMethod !== currentSignupMethod
     || paymentTitleChanged;
   if (!shouldRender) {
@@ -8565,6 +8678,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
 
   rebuildStepDefinitionState(nextPlusModeEnabled, {
     activeFlowId: nextActiveFlowId,
+    phoneVerificationEnabled: nextPhoneVerificationEnabled,
     plusPaymentMethod: nextPaymentMethod,
     signupMethod: nextSignupMethod,
   });
@@ -8582,10 +8696,12 @@ function applySettingsState(state) {
         signupMethod: state?.signupMethod,
       })
       : {
+        phoneVerificationEnabled: Boolean(state?.phoneVerificationEnabled),
         plusModeEnabled: Boolean(state?.plusModeEnabled),
         signupMethod: normalizeSignupMethod(state?.signupMethod || DEFAULT_SIGNUP_METHOD),
       };
     syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+      phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
       plusPaymentMethod: state?.plusPaymentMethod,
       signupMethod: stepDefinitionState.signupMethod,
     });
@@ -10645,12 +10761,44 @@ function renderStepStatuses(state = latestState) {
   for (const step of STEP_IDS) {
     renderSingleStepStatus(step, statuses[step]);
   }
+  for (const step of getDisplayStepDefinitions().filter((entry) => entry.displayOnly)) {
+    renderDisplayOnlyStepStatus(step, getDisplayStepStatus(step, statuses));
+  }
   updateProgressCounter();
 }
 
+function getDisplayStepStatus(step, statuses = getStepStatuses()) {
+  if (!step?.displayOnly) {
+    return statuses?.[Number(step?.executableStepId || step?.id)] || 'pending';
+  }
+  const previousStep = Number(step.previousExecutableStepId) || 0;
+  const previousStatus = previousStep ? statuses?.[previousStep] : '';
+  return isDoneStatus(previousStatus) ? 'completed' : 'pending';
+}
+
+function renderDisplayOnlyStepStatus(step, status) {
+  const displayStepId = String(step?.displayStepId || '');
+  document.querySelectorAll('.step-row[data-display-only="true"]').forEach((row) => {
+    if (row.dataset.displayStepId !== displayStepId || row.dataset.stepKey !== String(step?.key || '')) {
+      return;
+    }
+    const normalizedStatus = status || 'pending';
+    const statusEl = row.querySelector('.step-status');
+    if (statusEl) statusEl.textContent = STATUS_ICONS[normalizedStatus] || '';
+    row.className = `step-row step-display-only ${normalizedStatus}`;
+  });
+}
+
+function getDisplayStepProgress(state = latestState) {
+  const statuses = getStepStatuses(state);
+  const displaySteps = getDisplayStepDefinitions();
+  const completed = displaySteps.filter((step) => isDoneStatus(getDisplayStepStatus(step, statuses))).length;
+  return { completed, total: displaySteps.length };
+}
+
 function updateProgressCounter() {
-  const completed = Object.values(getStepStatuses()).filter(isDoneStatus).length;
-  stepsProgress.textContent = `${completed} / ${STEP_IDS.length}`;
+  const progress = getDisplayStepProgress();
+  stepsProgress.textContent = `${progress.completed} / ${progress.total}`;
 }
 
 function updateButtonStates() {
@@ -11582,6 +11730,9 @@ stepsList?.addEventListener('click', async (event) => {
   if (!btn) {
     return;
   }
+  if (btn.dataset.displayOnly === 'true') {
+    return;
+  }
   try {
     const step = Number(btn.dataset.step);
     if (!(await maybeTakeoverAutoRun(`执行步骤 ${step}`))) {
@@ -12189,16 +12340,19 @@ inputPlusModeEnabled?.addEventListener('change', () => {
   const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
     ? resolveStepDefinitionCapabilityState({
       ...(latestState || {}),
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: Boolean(inputPlusModeEnabled.checked),
       signupMethod: getSelectedSignupMethod(),
     }, {
       signupMethod: getSelectedSignupMethod(),
     })
     : {
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: Boolean(inputPlusModeEnabled.checked),
       signupMethod: getSelectedSignupMethod(),
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, getSelectedPlusPaymentMethod(), {
+    phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
     render: true,
     signupMethod: stepDefinitionState.signupMethod,
   });
@@ -12216,16 +12370,19 @@ selectPlusPaymentMethod?.addEventListener('change', () => {
   const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
     ? resolveStepDefinitionCapabilityState({
       ...(latestState || {}),
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: Boolean(inputPlusModeEnabled?.checked),
       signupMethod: getSelectedSignupMethod(),
     }, {
       signupMethod: getSelectedSignupMethod(),
     })
     : {
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: Boolean(inputPlusModeEnabled?.checked),
       signupMethod: getSelectedSignupMethod(),
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, selectPlusPaymentMethod.value, {
+    phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
     render: true,
     signupMethod: stepDefinitionState.signupMethod,
   });
@@ -12293,16 +12450,19 @@ selectPlusPaymentMethod?.addEventListener('change', () => {
   const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
     ? resolveStepDefinitionCapabilityState({
       ...(latestState || {}),
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: Boolean(inputPlusModeEnabled?.checked),
       signupMethod: getSelectedSignupMethod(),
     }, {
       signupMethod: getSelectedSignupMethod(),
     })
     : {
+      phoneVerificationEnabled: Boolean(inputPhoneVerificationEnabled?.checked),
       plusModeEnabled: Boolean(inputPlusModeEnabled?.checked),
       signupMethod: getSelectedSignupMethod(),
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+    phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
     render: true,
     plusPaymentMethod: selectPlusPaymentMethod.value,
     signupMethod: stepDefinitionState.signupMethod,
@@ -14279,9 +14439,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       ) {
         const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
           ? resolveStepDefinitionCapabilityState(latestState, {
+            phoneVerificationEnabled: latestState?.phoneVerificationEnabled,
             signupMethod: latestState?.signupMethod,
           })
           : {
+            phoneVerificationEnabled: Boolean(latestState?.phoneVerificationEnabled),
             plusModeEnabled: Boolean(latestState?.plusModeEnabled),
             signupMethod: normalizeSignupMethod(latestState?.signupMethod || DEFAULT_SIGNUP_METHOD),
           };
@@ -14289,6 +14451,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           stepDefinitionState.plusModeEnabled,
           latestState?.plusPaymentMethod,
           {
+            phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
             render: true,
             signupMethod: stepDefinitionState.signupMethod,
           }
@@ -14540,6 +14703,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message.payload.phoneVerificationEnabled !== undefined || message.payload.signupMethod !== undefined) {
         updatePhoneVerificationSettingsUI();
+        const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
+          ? resolveStepDefinitionCapabilityState(latestState, {
+            phoneVerificationEnabled: latestState?.phoneVerificationEnabled,
+            signupMethod: latestState?.signupMethod,
+          })
+          : {
+            phoneVerificationEnabled: Boolean(latestState?.phoneVerificationEnabled),
+            plusModeEnabled: Boolean(latestState?.plusModeEnabled),
+            signupMethod: normalizeSignupMethod(latestState?.signupMethod || DEFAULT_SIGNUP_METHOD),
+          };
+        syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+          phoneVerificationEnabled: stepDefinitionState.phoneVerificationEnabled,
+          plusPaymentMethod: latestState?.plusPaymentMethod,
+          render: true,
+          signupMethod: stepDefinitionState.signupMethod,
+        });
       }
       const activePhoneSmsProvider = normalizePhoneSmsProviderValue(
         message.payload.phoneSmsProvider !== undefined

@@ -28,6 +28,7 @@ test('flow capability registry keeps OpenAI phone signup available only when run
   assert.equal(enabledState.effectiveSignupMethod, 'phone');
   assert.equal(enabledState.shouldWarnCpaPhoneSignup, true);
   assert.deepEqual(enabledState.effectiveSignupMethods, ['email', 'phone']);
+  assert.equal(enabledState.stepDefinitionOptions.phoneVerificationEnabled, true);
 
   const plusLockedState = registry.resolveSidepanelCapabilities({
     state: {
@@ -44,6 +45,7 @@ test('flow capability registry keeps OpenAI phone signup available only when run
   assert.equal(plusLockedState.effectiveSignupMethod, 'email');
   assert.equal(plusLockedState.shouldWarnCpaPhoneSignup, false);
   assert.deepEqual(plusLockedState.effectiveSignupMethods, ['email']);
+  assert.equal(plusLockedState.stepDefinitionOptions.phoneVerificationEnabled, true);
 });
 
 test('flow capability registry defaults unknown flows to minimal non-phone capabilities', () => {
@@ -67,6 +69,7 @@ test('flow capability registry defaults unknown flows to minimal non-phone capab
   assert.equal(capabilityState.canShowLuckmail, false);
   assert.equal(capabilityState.canUsePhoneSignup, false);
   assert.equal(capabilityState.effectiveSignupMethod, 'email');
+  assert.equal(capabilityState.stepDefinitionOptions.phoneVerificationEnabled, false);
   assert.equal(capabilityState.panelMode, 'codex2api');
   assert.deepEqual(capabilityState.supportedPanelModes, []);
 });
