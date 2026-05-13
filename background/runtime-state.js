@@ -6,6 +6,7 @@
       DEFAULT_ACTIVE_FLOW_ID = 'openai',
       defaultStepStatuses = {},
       getStepDefinitionForState = null,
+      getResolvedStepsForState = null,
     } = deps;
 
     const RUNTIME_SHARED_FIELDS = Object.freeze([
@@ -214,7 +215,85 @@
       return String(getStepDefinitionForState(numericStep, state)?.key || '').trim();
     }
 
-    function normalizeNodeStatuses(value, state = {}, legacyStepCompat = null) {
+    function getResolvedSteps(state = {}) {
+      if (typeof getResolvedStepsForState !== 'function') {
+        return [];
+      }
+      const steps = getResolvedStepsForState(state);
+      return Array.isArray(steps) ? steps : [];
+    }
+
+    function resolveNodeStatusKey(step = {}) {
+      return String(step?.statusKey || step?.key || '').trim();
+    }
+
+    function normalizeDisplayStepStatuses(value, state = {}, nodeStatuses = null) {
+      const resolvedSteps = getResolvedSteps(state).filter((step) => Boolean(step?.displayOnly));
+      if (!resolvedSteps.length) {
+        return {};
+      }
+
+      const explicit = normalizePlainObject(value);
+      const next = {};
+
+      for (const step of resolvedSteps) {
+        const statusKey = resolveNodeStatusKey(step);
+        if (!statusKey) continue;
+
+        const hasNodeStatus = Boolean(nodeStatuses) && Object.prototype.hasOwnProperty.call(nodeStatuses, statusKey);
+        const normalizedStatus = normalizeNodeStatus(
+          hasNodeStatus ? nodeStatuses[statusKey] : explicit[statusKey]
+        );
+
+        if (normalizedStatus !== 'pending') {
+          next[statusKey] = normalizedStatus;
+        }
+      }
+
+      return next;
+    }
+
+    function normalizeNodeStatuses(value, state = {}, legacyStepCompat = null, displayStepStatuses = {}) {
+      const resolvedSteps = getResolvedSteps(state);
+      const explicit = isPlainObject(value)
+        ? Object.fromEntries(
+          Object.entries(value)
+            .map(([key, status]) => [String(key || '').trim(), normalizeNodeStatus(status)])
+            .filter(([key]) => Boolean(key))
+        )
+        : {};
+
+      if (resolvedSteps.length) {
+        const compat = legacyStepCompat || normalizeLegacyStepCompat({}, state);
+        const next = {};
+
+        for (const step of resolvedSteps) {
+          const statusKey = resolveNodeStatusKey(step);
+          if (!statusKey) continue;
+
+          if (Object.prototype.hasOwnProperty.call(explicit, statusKey)) {
+            next[statusKey] = explicit[statusKey];
+            continue;
+          }
+
+          if (step.displayOnly) {
+            next[statusKey] = normalizeNodeStatus(displayStepStatuses[statusKey]);
+            continue;
+          }
+
+          const stepId = normalizeStepNumber(step?.stepId || step?.executableStepId || step?.id);
+          next[statusKey] = normalizeNodeStatus(
+            stepId ? compat.stepStatuses[String(stepId)] : 'pending'
+          );
+        }
+
+        return next;
+      }
+
+      if (Object.keys(explicit).length > 0) {
+        return explicit;
+      }
+
       if (isPlainObject(value) && Object.keys(value).length > 0) {
         return Object.fromEntries(
           Object.entries(value)
@@ -232,6 +311,34 @@
         next[nodeKey] = normalizeNodeStatus(status);
       }
       return next;
+    }
+
+    function resolveCurrentNodeId(state = {}, baseRuntimeState = {}, nodeStatuses = {}, legacyStepCompat = null) {
+      const resolvedSteps = getResolvedSteps(state);
+      for (const step of resolvedSteps) {
+        const statusKey = resolveNodeStatusKey(step);
+        if (statusKey && nodeStatuses[statusKey] === 'running') {
+          return statusKey;
+        }
+      }
+
+      const firstRunningNodeKey = Object.entries(nodeStatuses)
+        .find(([, status]) => status === 'running')?.[0];
+      if (firstRunningNodeKey) {
+        return firstRunningNodeKey;
+      }
+
+      const compat = legacyStepCompat || normalizeLegacyStepCompat({}, state);
+      const currentStepKey = resolveStepKey(compat.currentStep, state);
+      if (currentStepKey) {
+        return currentStepKey;
+      }
+
+      return String(
+        Object.prototype.hasOwnProperty.call(state, 'currentNodeId')
+          ? state.currentNodeId
+          : baseRuntimeState.currentNodeId
+      ).trim();
     }
 
     function pickDefinedFields(state = {}, fields = []) {
@@ -334,16 +441,24 @@
           : baseRuntimeState.activeFlowId
       );
       const legacyStepCompat = normalizeLegacyStepCompat(baseRuntimeState.legacyStepCompat, state);
-      const currentNodeId = String(
-        Object.prototype.hasOwnProperty.call(state, 'currentNodeId')
-          ? state.currentNodeId
-          : (baseRuntimeState.currentNodeId || resolveStepKey(legacyStepCompat.currentStep, state))
-      ).trim();
+      const displayStepStatuses = normalizeDisplayStepStatuses(
+        Object.prototype.hasOwnProperty.call(state, 'displayStepStatuses')
+          ? state.displayStepStatuses
+          : {},
+        state
+      );
       const nodeStatuses = normalizeNodeStatuses(
         Object.prototype.hasOwnProperty.call(state, 'nodeStatuses')
           ? state.nodeStatuses
           : baseRuntimeState.nodeStatuses,
         state,
+        legacyStepCompat,
+        displayStepStatuses
+      );
+      const currentNodeId = resolveCurrentNodeId(
+        state,
+        baseRuntimeState,
+        nodeStatuses,
         legacyStepCompat
       );
 
@@ -430,12 +545,19 @@
 
     function buildStateView(state = {}) {
       const runtimeState = ensureRuntimeState(state);
+      const displayStepStatuses = normalizeDisplayStepStatuses(state.displayStepStatuses, {
+        ...state,
+        activeFlowId: runtimeState.activeFlowId,
+        currentStep: runtimeState.legacyStepCompat.currentStep,
+        stepStatuses: runtimeState.legacyStepCompat.stepStatuses,
+      }, runtimeState.nodeStatuses);
       return {
         ...state,
         activeFlowId: runtimeState.activeFlowId,
         activeRunId: runtimeState.activeRunId,
         currentNodeId: runtimeState.currentNodeId,
         nodeStatuses: cloneValue(runtimeState.nodeStatuses),
+        displayStepStatuses: cloneValue(displayStepStatuses),
         flowState: cloneValue(runtimeState.flowState),
         sharedState: cloneValue(runtimeState.sharedState),
         serviceState: cloneValue(runtimeState.serviceState),
@@ -448,11 +570,49 @@
 
     function buildSessionStatePatch(currentState = {}, updates = {}) {
       const flattenedUpdates = buildFlattenedUpdates(updates);
+      const runtimeStateUpdates = normalizePlainObject(updates.runtimeState);
+      const legacyStepCompatUpdates = normalizePlainObject(updates.legacyStepCompat);
+      const touchedLegacyStepCompat = (
+        Object.prototype.hasOwnProperty.call(flattenedUpdates, 'currentStep')
+        || Object.prototype.hasOwnProperty.call(flattenedUpdates, 'stepStatuses')
+        || Object.prototype.hasOwnProperty.call(legacyStepCompatUpdates, 'currentStep')
+        || Object.prototype.hasOwnProperty.call(legacyStepCompatUpdates, 'stepStatuses')
+        || Object.prototype.hasOwnProperty.call(runtimeStateUpdates, 'legacyStepCompat')
+      );
+      const touchedStepDefinitionContext = [
+        'activeFlowId',
+        'phoneVerificationEnabled',
+        'plusModeEnabled',
+        'plusPaymentMethod',
+        'signupMethod',
+        'resolvedSignupMethod',
+      ].some((key) => Object.prototype.hasOwnProperty.call(flattenedUpdates, key));
+      const touchedDisplayStepCompat = Object.prototype.hasOwnProperty.call(flattenedUpdates, 'displayStepStatuses');
+      const explicitNodeStatuses = (
+        Object.prototype.hasOwnProperty.call(flattenedUpdates, 'nodeStatuses')
+        || Object.prototype.hasOwnProperty.call(runtimeStateUpdates, 'nodeStatuses')
+      );
+      const explicitCurrentNodeId = (
+        Object.prototype.hasOwnProperty.call(flattenedUpdates, 'currentNodeId')
+        || Object.prototype.hasOwnProperty.call(runtimeStateUpdates, 'currentNodeId')
+      );
       const nextState = {
         ...currentState,
         ...flattenedUpdates,
       };
+      if (!explicitNodeStatuses && (touchedLegacyStepCompat || touchedDisplayStepCompat || touchedStepDefinitionContext)) {
+        delete nextState.nodeStatuses;
+      }
+      if (!explicitCurrentNodeId && (touchedLegacyStepCompat || touchedDisplayStepCompat || touchedStepDefinitionContext)) {
+        delete nextState.currentNodeId;
+      }
       const runtimeState = ensureRuntimeState(nextState);
+      const displayStepStatuses = normalizeDisplayStepStatuses(nextState.displayStepStatuses, {
+        ...nextState,
+        activeFlowId: runtimeState.activeFlowId,
+        currentStep: runtimeState.legacyStepCompat.currentStep,
+        stepStatuses: runtimeState.legacyStepCompat.stepStatuses,
+      }, runtimeState.nodeStatuses);
 
       return {
         ...flattenedUpdates,
@@ -460,6 +620,7 @@
         activeRunId: runtimeState.activeRunId,
         currentNodeId: runtimeState.currentNodeId,
         nodeStatuses: cloneValue(runtimeState.nodeStatuses),
+        displayStepStatuses: cloneValue(displayStepStatuses),
         currentStep: runtimeState.legacyStepCompat.currentStep,
         stepStatuses: cloneValue(runtimeState.legacyStepCompat.stepStatuses),
         runtimeState,

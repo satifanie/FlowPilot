@@ -10765,6 +10765,11 @@ function getDisplayStepStatuses(state = latestState) {
 }
 
 function getDisplayStepStatus(step, statuses = getStepStatuses(), state = latestState) {
+  const statusKey = String(step?.statusKey || step?.key || '').trim();
+  const normalizedNodeStatus = String(state?.nodeStatuses?.[statusKey] || '').trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(STATUS_ICONS, normalizedNodeStatus)) {
+    return normalizedNodeStatus;
+  }
   if (!step?.displayOnly) {
     return statuses?.[Number(step?.executableStepId || step?.id)] || 'pending';
   }

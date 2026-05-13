@@ -225,6 +225,7 @@ const runtimeStateHelpers = self.MultiPageBackgroundRuntimeState?.createRuntimeS
   DEFAULT_ACTIVE_FLOW_ID,
   defaultStepStatuses: DEFAULT_STEP_STATUSES,
   getStepDefinitionForState: (step, state) => getStepDefinitionForState(step, state),
+  getResolvedStepsForState: (state) => getResolvedStepDefinitionsForState(state),
 }) || null;
 const DEFAULT_REGISTRATION_EMAIL_STATE = registrationEmailStateHelpers?.DEFAULT_REGISTRATION_EMAIL_STATE || {
   current: '',
@@ -630,6 +631,35 @@ function getStepDefinitionsForState(state = {}) {
     return PLUS_GPC_STEP_DEFINITIONS;
   }
   return paymentMethod === PLUS_PAYMENT_METHOD_GOPAY ? PLUS_GOPAY_STEP_DEFINITIONS : PLUS_PAYPAL_STEP_DEFINITIONS;
+}
+
+function getResolvedStepDefinitionsForState(state = {}) {
+  const rootScope = typeof self !== 'undefined' ? self : globalThis;
+  if (rootScope.MultiPageStepDefinitions?.getResolvedSteps) {
+    const defaultFlowId = typeof DEFAULT_ACTIVE_FLOW_ID === 'string' ? DEFAULT_ACTIVE_FLOW_ID : 'openai';
+    const activeFlowId = String(state?.activeFlowId || '').trim().toLowerCase() || defaultFlowId;
+    const definitions = rootScope.MultiPageStepDefinitions.getResolvedSteps({
+      activeFlowId,
+      phoneVerificationEnabled: Boolean(state?.phoneVerificationEnabled),
+      plusModeEnabled: isPlusModeState(state),
+      plusPaymentMethod: normalizePlusPaymentMethod(state?.plusPaymentMethod),
+      signupMethod: getSignupMethodForStepDefinitions(state),
+    });
+    if (Array.isArray(definitions)) {
+      return definitions;
+    }
+  }
+
+  return getStepDefinitionsForState(state).map((definition) => {
+    const stepId = Number(definition?.id);
+    return {
+      ...definition,
+      displayOnly: false,
+      stepId: Number.isFinite(stepId) ? stepId : null,
+      executableStepId: Number.isFinite(stepId) ? stepId : '',
+      statusKey: String(definition?.key || ''),
+    };
+  });
 }
 
 function getStepIdsForState(state = {}) {
@@ -8220,6 +8250,10 @@ function getDisplayStepStatus(stepKey = DISPLAY_PHONE_VERIFICATION_STEP_KEY, sta
   const normalizedStepKey = String(stepKey || '').trim();
   if (!normalizedStepKey) {
     return 'pending';
+  }
+  const normalizedNodeStatus = String(state?.nodeStatuses?.[normalizedStepKey] || '').trim().toLowerCase();
+  if (DISPLAY_STEP_STATUS_VALUES.has(normalizedNodeStatus)) {
+    return normalizedNodeStatus;
   }
   const normalizedStatus = String(getDisplayStepStatuses(state)[normalizedStepKey] || '').trim().toLowerCase();
   return DISPLAY_STEP_STATUS_VALUES.has(normalizedStatus) ? normalizedStatus : 'pending';

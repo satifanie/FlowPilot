@@ -251,6 +251,10 @@
       if (!normalizedStepKey) {
         return 'pending';
       }
+      const normalizedNodeStatus = String(state?.nodeStatuses?.[normalizedStepKey] || '').trim().toLowerCase();
+      if (DISPLAY_STEP_STATUS_VALUES.has(normalizedNodeStatus)) {
+        return normalizedNodeStatus;
+      }
       const normalizedStatus = String(getDisplayStepStatuses(state)[normalizedStepKey] || '').trim().toLowerCase();
       return DISPLAY_STEP_STATUS_VALUES.has(normalizedStatus) ? normalizedStatus : 'pending';
     }

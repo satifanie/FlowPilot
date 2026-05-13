@@ -424,6 +424,14 @@ return {
   assert.equal(api.canRunDisplayStepEntry(confirmStep, displaySteps, statuses, {
     displayStepStatuses: { 'phone-verification': 'completed' },
   }), true);
+  assert.equal(api.getDisplayStepStatus(phoneStep, statuses, {
+    nodeStatuses: { 'phone-verification': 'running' },
+    displayStepStatuses: { 'phone-verification': 'completed' },
+  }), 'running');
+  assert.equal(api.canRunDisplayStepEntry(confirmStep, displaySteps, statuses, {
+    nodeStatuses: { 'phone-verification': 'skipped' },
+    displayStepStatuses: {},
+  }), true);
 });
 
 test('sidepanel normalizeSignupMethod stays independent from signup constants during bootstrap', () => {

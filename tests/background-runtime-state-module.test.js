@@ -161,3 +161,124 @@ test('runtime-state patch accepts nested flow updates while keeping legacy compa
   assert.equal(patch.runtimeState.flowState.openai.auth.oauthUrl, 'https://new.example.com/start');
   assert.equal(patch.runtimeState.flowState.openai.plus.plusCheckoutTabId, 99);
 });
+
+test('runtime-state patch re-derives node and display step statuses from legacy step updates', () => {
+  const api = loadRuntimeStateApi();
+  const helpers = api.createRuntimeStateHelpers({
+    DEFAULT_ACTIVE_FLOW_ID: 'openai',
+    defaultStepStatuses: {
+      7: 'pending',
+      8: 'pending',
+      9: 'pending',
+      10: 'pending',
+    },
+    getStepDefinitionForState(step) {
+      return {
+        7: { id: 7, key: 'oauth-login' },
+        8: { id: 8, key: 'fetch-login-code' },
+        9: { id: 9, key: 'confirm-oauth' },
+        10: { id: 10, key: 'platform-verify' },
+      }[Number(step)] || null;
+    },
+    getResolvedStepsForState() {
+      return [
+        { id: 7, key: 'oauth-login', statusKey: 'oauth-login', stepId: 7, executableStepId: 7, displayOnly: false },
+        { id: 8, key: 'fetch-login-code', statusKey: 'fetch-login-code', stepId: 8, executableStepId: 8, displayOnly: false },
+        { id: '8:phone-verification', key: 'phone-verification', statusKey: 'phone-verification', displayOnly: true },
+        { id: 9, key: 'confirm-oauth', statusKey: 'confirm-oauth', stepId: 9, executableStepId: 9, displayOnly: false },
+        { id: 10, key: 'platform-verify', statusKey: 'platform-verify', stepId: 10, executableStepId: 10, displayOnly: false },
+      ];
+    },
+  });
+
+  const patch = helpers.buildSessionStatePatch({
+    activeFlowId: 'openai',
+    phoneVerificationEnabled: true,
+    signupMethod: 'email',
+    currentStep: 7,
+    currentNodeId: 'oauth-login',
+    stepStatuses: {
+      7: 'running',
+      8: 'pending',
+      9: 'pending',
+      10: 'pending',
+    },
+    displayStepStatuses: {
+      'phone-verification': 'failed',
+    },
+    nodeStatuses: {
+      'oauth-login': 'running',
+      'fetch-login-code': 'pending',
+      'phone-verification': 'failed',
+      'confirm-oauth': 'pending',
+      'platform-verify': 'pending',
+    },
+  }, {
+    currentStep: 8,
+    stepStatuses: {
+      7: 'completed',
+      8: 'running',
+      9: 'pending',
+      10: 'pending',
+    },
+    displayStepStatuses: {
+      'phone-verification': 'completed',
+    },
+  });
+
+  assert.equal(patch.currentNodeId, 'fetch-login-code');
+  assert.deepStrictEqual(patch.nodeStatuses, {
+    'oauth-login': 'completed',
+    'fetch-login-code': 'running',
+    'phone-verification': 'completed',
+    'confirm-oauth': 'pending',
+    'platform-verify': 'pending',
+  });
+  assert.deepStrictEqual(patch.displayStepStatuses, {
+    'phone-verification': 'completed',
+  });
+});
+
+test('runtime-state view derives display-only status from node status when compat map is missing', () => {
+  const api = loadRuntimeStateApi();
+  const helpers = api.createRuntimeStateHelpers({
+    DEFAULT_ACTIVE_FLOW_ID: 'openai',
+    defaultStepStatuses: {
+      8: 'pending',
+      9: 'pending',
+    },
+    getStepDefinitionForState(step) {
+      return {
+        8: { id: 8, key: 'fetch-login-code' },
+        9: { id: 9, key: 'confirm-oauth' },
+      }[Number(step)] || null;
+    },
+    getResolvedStepsForState() {
+      return [
+        { id: 8, key: 'fetch-login-code', statusKey: 'fetch-login-code', stepId: 8, executableStepId: 8, displayOnly: false },
+        { id: '8:phone-verification', key: 'phone-verification', statusKey: 'phone-verification', displayOnly: true },
+        { id: 9, key: 'confirm-oauth', statusKey: 'confirm-oauth', stepId: 9, executableStepId: 9, displayOnly: false },
+      ];
+    },
+  });
+
+  const view = helpers.buildStateView({
+    activeFlowId: 'openai',
+    phoneVerificationEnabled: true,
+    signupMethod: 'email',
+    currentStep: 8,
+    stepStatuses: {
+      8: 'completed',
+      9: 'pending',
+    },
+    nodeStatuses: {
+      'fetch-login-code': 'completed',
+      'phone-verification': 'skipped',
+      'confirm-oauth': 'pending',
+    },
+  });
+
+  assert.deepStrictEqual(view.displayStepStatuses, {
+    'phone-verification': 'skipped',
+  });
+});
