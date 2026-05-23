@@ -69,6 +69,10 @@ test('sidepanel html places cloudflare temp email controls in a standalone secti
   assert.match(html, /data-temp-email-lookup-mode="registration-email"/);
   assert.match(html, /id="row-temp-email-random-subdomain-toggle"/);
   assert.match(html, /id="input-temp-email-use-random-subdomain"/);
+  assert.match(html, /id="row-temp-email-fixed-subdomain-toggle"/);
+  assert.match(html, /id="input-temp-email-use-fixed-subdomain"/);
+  assert.match(html, /id="row-temp-email-fixed-subdomain-prefix"/);
+  assert.match(html, /id="input-temp-email-subdomain-prefix"/);
   assert.match(html, /id="btn-temp-email-domain-mode"[^>]*>更新</);
   assert.doesNotMatch(html, /id="row-temp-email-random-subdomain-domain"/);
 });
@@ -142,6 +146,8 @@ const inputTempEmailAdminAuth = { value: '' };
 const inputTempEmailCustomAuth = { value: '' };
 const inputTempEmailReceiveMailbox = { value: '' };
 const inputTempEmailUseRandomSubdomain = { checked: false };
+const inputTempEmailUseFixedSubdomain = { checked: false };
+const inputTempEmailSubdomainPrefix = { value: '' };
 const calls = {
   domainOptions: [],
   domainEditMode: [],
@@ -150,6 +156,10 @@ const calls = {
 function renderCloudflareTempEmailDomainOptions(value) { calls.domainOptions.push(value); }
 function setCloudflareTempEmailDomainEditMode(editing, options) { calls.domainEditMode.push({ editing, options }); }
 function setCloudflareTempEmailLookupMode(value) { calls.lookupModes.push(value); }
+function normalizeCloudflareTempEmailSubdomainPrefixValue(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(normalized) ? normalized : '';
+}
 ${bundle}
 return {
   applyCloudflareTempEmailSettingsState,
@@ -159,6 +169,8 @@ return {
   inputTempEmailCustomAuth,
   inputTempEmailReceiveMailbox,
   inputTempEmailUseRandomSubdomain,
+  inputTempEmailUseFixedSubdomain,
+  inputTempEmailSubdomainPrefix,
 };
   `)();
 
@@ -169,6 +181,8 @@ return {
     cloudflareTempEmailLookupMode: 'registration-email',
     cloudflareTempEmailReceiveMailbox: 'relay@example.com',
     cloudflareTempEmailUseRandomSubdomain: true,
+    cloudflareTempEmailUseFixedSubdomain: true,
+    cloudflareTempEmailSubdomainPrefix: 'Team',
     cloudflareTempEmailDomain: 'mail.example.com',
   });
 
@@ -176,7 +190,9 @@ return {
   assert.equal(api.inputTempEmailAdminAuth.value, 'admin-secret');
   assert.equal(api.inputTempEmailCustomAuth.value, 'custom-secret');
   assert.equal(api.inputTempEmailReceiveMailbox.value, 'relay@example.com');
-  assert.equal(api.inputTempEmailUseRandomSubdomain.checked, true);
+  assert.equal(api.inputTempEmailUseRandomSubdomain.checked, false);
+  assert.equal(api.inputTempEmailUseFixedSubdomain.checked, true);
+  assert.equal(api.inputTempEmailSubdomainPrefix.value, 'team');
   assert.deepEqual(api.calls.lookupModes, ['registration-email']);
   assert.deepEqual(api.calls.domainOptions, ['mail.example.com']);
   assert.deepEqual(api.calls.domainEditMode, [{ editing: false, options: { clearInput: true } }]);
@@ -416,6 +432,8 @@ const rowTempEmailCustomAuth = ${JSON.stringify(createRow('none'))};
 const rowTempEmailLookupMode = ${JSON.stringify(createRow('none'))};
 const rowTempEmailReceiveMailbox = ${JSON.stringify(createRow('none'))};
 const rowTempEmailRandomSubdomainToggle = ${JSON.stringify(createRow('none'))};
+const rowTempEmailFixedSubdomainToggle = ${JSON.stringify(createRow('none'))};
+const rowTempEmailFixedSubdomainPrefix = ${JSON.stringify(createRow('none'))};
 const rowTempEmailDomain = ${JSON.stringify(createRow('none'))};
 const cloudflareTempEmailSection = ${JSON.stringify(createRow('none'))};
 const hotmailSection = ${JSON.stringify(createRow('none'))};
@@ -436,7 +454,10 @@ const rowHotmailLocalBaseUrl = ${JSON.stringify(createRow('none'))};
 const inputMail2925UseAccountPool = { checked: false };
 const selectMailProvider = { value: '163' };
 const selectEmailGenerator = { value: 'cloudflare-temp-email', disabled: false };
+const selectTempEmailDomain = { value: 'mail.example.com' };
 const inputTempEmailUseRandomSubdomain = { checked: false };
+const inputTempEmailUseFixedSubdomain = { checked: false };
+const inputTempEmailSubdomainPrefix = { value: 'team' };
 const calls = {
   tempDomainEditMode: [],
 };
@@ -460,6 +481,14 @@ function getSelectedHotmailServiceMode() { return 'local'; }
 function getCloudflareDomainsFromState() { return { domains: [], activeDomain: '' }; }
 function setCloudflareDomainEditMode() {}
 function getCloudflareTempEmailDomainsFromState() { return { domains: ['mail.example.com'], activeDomain: 'mail.example.com' }; }
+function normalizeCloudflareTempEmailDomainValue(value = '') { return String(value || '').trim().toLowerCase(); }
+function normalizeCloudflareTempEmailSubdomainPrefixValue(value = '') { return String(value || '').trim().toLowerCase(); }
+function buildCloudflareTempEmailEffectiveDomainValue(domain = '', subdomainPrefix = '', options = {}) {
+  const normalizedDomain = normalizeCloudflareTempEmailDomainValue(domain);
+  const normalizedPrefix = normalizeCloudflareTempEmailSubdomainPrefixValue(subdomainPrefix);
+  if (options.requirePrefix && !normalizedPrefix) return '';
+  return normalizedPrefix ? \`\${normalizedPrefix}.\${normalizedDomain}\` : normalizedDomain;
+}
 function setCloudflareTempEmailDomainEditMode(editing) { calls.tempDomainEditMode.push(editing); }
 function queueIcloudAliasRefresh() {}
 function hideIcloudLoginHelp() {}
@@ -477,8 +506,12 @@ return {
   rowTempEmailLookupMode,
   rowTempEmailReceiveMailbox,
   rowTempEmailRandomSubdomainToggle,
+  rowTempEmailFixedSubdomainToggle,
+  rowTempEmailFixedSubdomainPrefix,
   rowTempEmailDomain,
   inputTempEmailUseRandomSubdomain,
+  inputTempEmailUseFixedSubdomain,
+  inputTempEmailSubdomainPrefix,
   selectMailProvider,
   selectEmailGenerator,
   setLookupMode(value) {
@@ -492,6 +525,8 @@ return {
   api.updateMailProviderUI();
   assert.equal(api.cloudflareTempEmailSection.style.display, '');
   assert.equal(api.rowTempEmailRandomSubdomainToggle.style.display, '');
+  assert.equal(api.rowTempEmailFixedSubdomainToggle.style.display, '');
+  assert.equal(api.rowTempEmailFixedSubdomainPrefix.style.display, 'none');
   assert.equal(api.rowTempEmailDomain.style.display, '');
 
   api.selectMailProvider.value = 'cloudflare-temp-email';
@@ -513,4 +548,16 @@ return {
   assert.equal(api.cloudflareTempEmailSection.style.display, '');
   assert.equal(api.rowTempEmailDomain.style.display, '');
   assert.match(api.autoHintText.textContent, /RANDOM_SUBDOMAIN_DOMAINS/);
+
+  api.inputTempEmailUseRandomSubdomain.checked = false;
+  api.inputTempEmailUseFixedSubdomain.checked = true;
+  api.inputTempEmailSubdomainPrefix.value = 'team';
+  api.updateMailProviderUI();
+  assert.equal(api.rowTempEmailFixedSubdomainPrefix.style.display, '');
+  assert.match(api.autoHintText.textContent, /team\.mail\.example\.com/);
+  assert.match(api.autoHintText.textContent, /ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH/);
+
+  api.inputTempEmailSubdomainPrefix.value = '';
+  api.updateMailProviderUI();
+  assert.match(api.autoHintText.textContent, /请填写有效的子域前缀/);
 });

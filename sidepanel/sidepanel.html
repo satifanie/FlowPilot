@@ -826,6 +826,25 @@
           <span class="setting-caption">依赖后端 RANDOM_SUBDOMAIN_DOMAINS</span>
         </div>
       </div>
+      <div class="data-row" id="row-temp-email-fixed-subdomain-toggle" style="display:none;">
+        <span class="data-label">固定子域</span>
+        <div class="data-inline">
+          <label class="toggle-switch" for="input-temp-email-use-fixed-subdomain"
+            title="依赖后端 ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH 配置">
+            <input type="checkbox" id="input-temp-email-use-fixed-subdomain" />
+            <span class="toggle-switch-track" aria-hidden="true">
+              <span class="toggle-switch-thumb"></span>
+            </span>
+            <span>启用</span>
+          </label>
+          <span class="setting-caption">与随机子域互斥</span>
+        </div>
+      </div>
+      <div class="data-row" id="row-temp-email-fixed-subdomain-prefix" style="display:none;">
+        <span class="data-label">子域前缀</span>
+        <input type="text" id="input-temp-email-subdomain-prefix" class="data-input"
+          placeholder="例如 a；当前域名为 b.com 时生成 xxx@a.b.com" />
+      </div>
       <div class="data-row" id="row-temp-email-domain" style="display:none;">
         <span class="data-label">Temp 域名</span>
         <div class="data-inline">

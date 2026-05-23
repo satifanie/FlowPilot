@@ -130,6 +130,8 @@ const inputTempEmailAdminAuth = { value: '' };
 const inputTempEmailCustomAuth = { value: '' };
 const inputTempEmailReceiveMailbox = { value: '' };
 const inputTempEmailUseRandomSubdomain = { checked: false };
+const inputTempEmailUseFixedSubdomain = { checked: false };
+const inputTempEmailSubdomainPrefix = { value: '' };
 const inputAutoSkipFailures = { checked: false };
 const inputAutoSkipFailuresThreadIntervalMinutes = { value: '0' };
 const inputAutoStepDelaySeconds = { value: '' };
@@ -215,6 +217,7 @@ function normalizeLuckmailBaseUrl(value) { return String(value || '').trim(); }
 function normalizeLuckmailEmailType(value) { return String(value || '').trim() || 'ms_graph'; }
 function normalizeCloudflareTempEmailBaseUrlValue(value) { return String(value || '').trim(); }
 function normalizeCloudflareTempEmailReceiveMailboxValue(value) { return String(value || '').trim(); }
+function normalizeCloudflareTempEmailSubdomainPrefixValue(value) { return String(value || '').trim().toLowerCase(); }
 function normalizeAccountRunHistoryHelperBaseUrlValue(value) { return String(value || '').trim(); }
 function normalizeAutoRunThreadIntervalMinutes(value) { return Number(value) || 0; }
 function normalizeAutoStepDelaySeconds(value) { return value === '' ? null : Number(value); }
@@ -273,6 +276,8 @@ const rowTempEmailAdminAuth = createRow();
 const rowTempEmailCustomAuth = createRow();
 const rowTempEmailReceiveMailbox = createRow();
 const rowTempEmailRandomSubdomainToggle = createRow();
+const rowTempEmailFixedSubdomainToggle = createRow();
+const rowTempEmailFixedSubdomainPrefix = createRow();
 const rowTempEmailDomain = createRow();
 const cloudflareTempEmailSection = createRow();
 const hotmailSection = createRow();
@@ -299,6 +304,8 @@ const selectIcloudTargetMailboxType = { value: 'icloud-inbox' };
 const selectIcloudForwardMailProvider = { value: 'gmail' };
 const selectIcloudHostPreference = { value: 'icloud.com.cn' };
 const inputTempEmailUseRandomSubdomain = { checked: false };
+const inputTempEmailUseFixedSubdomain = { checked: false };
+const inputTempEmailSubdomainPrefix = { value: '' };
 const inputRunCount = { disabled: false };
 const currentAutoRun = { autoRunning: false };
 const MAIL_PROVIDER_LOGIN_CONFIGS = { gmail: { label: 'Gmail 邮箱' } };

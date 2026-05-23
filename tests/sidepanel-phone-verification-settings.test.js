@@ -976,6 +976,8 @@ const inputTempEmailAdminAuth = { value: '' };
 const inputTempEmailCustomAuth = { value: '' };
 const inputTempEmailReceiveMailbox = { value: '' };
 const inputTempEmailUseRandomSubdomain = { checked: false };
+const inputTempEmailUseFixedSubdomain = { checked: false };
+const inputTempEmailSubdomainPrefix = { value: '' };
 const inputAutoSkipFailures = { checked: false };
 const inputAutoSkipFailuresThreadIntervalMinutes = { value: '0' };
 const inputAutoStepDelaySeconds = { value: '' };
@@ -1067,6 +1069,7 @@ function normalizeLuckmailBaseUrl(value) { return String(value || '').trim(); }
 function normalizeLuckmailEmailType(value) { return String(value || '').trim() || 'ms_graph'; }
 function normalizeCloudflareTempEmailBaseUrlValue(value) { return String(value || '').trim(); }
 function normalizeCloudflareTempEmailReceiveMailboxValue(value) { return String(value || '').trim(); }
+function normalizeCloudflareTempEmailSubdomainPrefixValue(value) { return String(value || '').trim().toLowerCase(); }
 function normalizeAccountRunHistoryHelperBaseUrlValue(value) { return String(value || '').trim(); }
 function normalizeAutoRunThreadIntervalMinutes(value) { return Number(value) || 0; }
 function normalizeAutoStepDelaySeconds(value) { return value === '' ? null : Number(value); }

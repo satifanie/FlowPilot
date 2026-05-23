@@ -299,6 +299,10 @@ const rowTempEmailReceiveMailbox = document.getElementById('row-temp-email-recei
 const inputTempEmailReceiveMailbox = document.getElementById('input-temp-email-receive-mailbox');
 const rowTempEmailRandomSubdomainToggle = document.getElementById('row-temp-email-random-subdomain-toggle');
 const inputTempEmailUseRandomSubdomain = document.getElementById('input-temp-email-use-random-subdomain');
+const rowTempEmailFixedSubdomainToggle = document.getElementById('row-temp-email-fixed-subdomain-toggle');
+const inputTempEmailUseFixedSubdomain = document.getElementById('input-temp-email-use-fixed-subdomain');
+const rowTempEmailFixedSubdomainPrefix = document.getElementById('row-temp-email-fixed-subdomain-prefix');
+const inputTempEmailSubdomainPrefix = document.getElementById('input-temp-email-subdomain-prefix');
 const rowTempEmailDomain = document.getElementById('row-temp-email-domain');
 const selectTempEmailDomain = document.getElementById('select-temp-email-domain');
 const tempEmailDomainPickerRoot = document.getElementById('temp-email-domain-picker');
@@ -4092,6 +4096,27 @@ function normalizeCloudflareTempEmailDomainValue(value = '') {
   return normalizeCloudflareDomainValue(value);
 }
 
+function normalizeCloudflareTempEmailSubdomainPrefixValue(value = '') {
+  let normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return '';
+  normalized = normalized.replace(/^@+/, '');
+  normalized = normalized.replace(/^https?:\/\//, '');
+  normalized = normalized.replace(/\/.*$/, '');
+  normalized = normalized.replace(/^\.+|\.+$/g, '');
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(normalized)) {
+    return '';
+  }
+  return normalized;
+}
+
+function buildCloudflareTempEmailEffectiveDomainValue(domain = '', subdomainPrefix = '', options = {}) {
+  const normalizedDomain = normalizeCloudflareTempEmailDomainValue(domain);
+  if (!normalizedDomain) return '';
+  const normalizedPrefix = normalizeCloudflareTempEmailSubdomainPrefixValue(subdomainPrefix);
+  if (options.requirePrefix && !normalizedPrefix) return '';
+  return normalizedPrefix ? `${normalizedPrefix}.${normalizedDomain}` : normalizedDomain;
+}
+
 function normalizeCloudflareTempEmailDomains(values = []) {
   const seen = new Set();
   const domains = [];
@@ -4182,7 +4207,16 @@ function applyCloudflareTempEmailSettingsState(state = {}) {
   inputTempEmailReceiveMailbox.value = state?.cloudflareTempEmailReceiveMailbox || '';
   setCloudflareTempEmailLookupMode(state?.cloudflareTempEmailLookupMode);
   if (inputTempEmailUseRandomSubdomain) {
-    inputTempEmailUseRandomSubdomain.checked = Boolean(state?.cloudflareTempEmailUseRandomSubdomain);
+    inputTempEmailUseRandomSubdomain.checked = Boolean(state?.cloudflareTempEmailUseRandomSubdomain)
+      && !Boolean(state?.cloudflareTempEmailUseFixedSubdomain);
+  }
+  if (inputTempEmailUseFixedSubdomain) {
+    inputTempEmailUseFixedSubdomain.checked = Boolean(state?.cloudflareTempEmailUseFixedSubdomain);
+  }
+  if (inputTempEmailSubdomainPrefix) {
+    inputTempEmailSubdomainPrefix.value = normalizeCloudflareTempEmailSubdomainPrefixValue(
+      state?.cloudflareTempEmailSubdomainPrefix || ''
+    );
   }
   renderCloudflareTempEmailDomainOptions(state?.cloudflareTempEmailDomain || '');
   setCloudflareTempEmailDomainEditMode(false, { clearInput: true });
@@ -5128,7 +5162,12 @@ function collectSettingsPayload() {
       ? getSelectedCloudflareTempEmailLookupMode()
       : 'receive-mailbox',
     cloudflareTempEmailReceiveMailbox: normalizeCloudflareTempEmailReceiveMailboxValue(inputTempEmailReceiveMailbox.value),
-    cloudflareTempEmailUseRandomSubdomain: Boolean(inputTempEmailUseRandomSubdomain?.checked),
+    cloudflareTempEmailUseRandomSubdomain: Boolean(inputTempEmailUseRandomSubdomain?.checked)
+      && !Boolean(inputTempEmailUseFixedSubdomain?.checked),
+    cloudflareTempEmailUseFixedSubdomain: Boolean(inputTempEmailUseFixedSubdomain?.checked),
+    cloudflareTempEmailSubdomainPrefix: normalizeCloudflareTempEmailSubdomainPrefixValue(
+      inputTempEmailSubdomainPrefix?.value || ''
+    ),
     cloudflareTempEmailDomain: selectedCloudflareTempEmailDomain,
     cloudflareTempEmailDomains: tempEmailDomains,
     cloudMailBaseUrl: normalizeCloudMailBaseUrlInput((typeof inputCloudMailBaseUrl !== 'undefined' && inputCloudMailBaseUrl) ? inputCloudMailBaseUrl.value : ''),
@@ -12959,6 +12998,9 @@ function updateMailProviderUI() {
   const showIcloudTargetMailboxType = useIcloudProvider;
   const showIcloudForwardMailProvider = useIcloudProvider && icloudTargetMailboxType === 'forward-mailbox';
   const showCloudflareTempEmailRandomSubdomainToggle = useEmailGenerator && useCloudflareTempEmailGenerator;
+  const showCloudflareTempEmailFixedSubdomainToggle = useEmailGenerator && useCloudflareTempEmailGenerator;
+  const showCloudflareTempEmailFixedSubdomainPrefix = showCloudflareTempEmailFixedSubdomainToggle
+    && Boolean(inputTempEmailUseFixedSubdomain?.checked);
   const showCloudflareTempEmailDomain = useEmailGenerator && useCloudflareTempEmailGenerator;
   if (rowEmailGenerator) {
     rowEmailGenerator.style.display = useEmailGenerator ? '' : 'none';
@@ -13017,6 +13059,12 @@ function updateMailProviderUI() {
   rowTempEmailReceiveMailbox.style.display = showCloudflareTempEmailReceiveMailbox ? '' : 'none';
   if (rowTempEmailRandomSubdomainToggle) {
     rowTempEmailRandomSubdomainToggle.style.display = showCloudflareTempEmailRandomSubdomainToggle ? '' : 'none';
+  }
+  if (rowTempEmailFixedSubdomainToggle) {
+    rowTempEmailFixedSubdomainToggle.style.display = showCloudflareTempEmailFixedSubdomainToggle ? '' : 'none';
+  }
+  if (rowTempEmailFixedSubdomainPrefix) {
+    rowTempEmailFixedSubdomainPrefix.style.display = showCloudflareTempEmailFixedSubdomainPrefix ? '' : 'none';
   }
   rowTempEmailDomain.style.display = showCloudflareTempEmailDomain ? '' : 'none';
   const { domains: tempEmailDomains } = getCloudflareTempEmailDomainsFromState();
@@ -13118,6 +13166,17 @@ function updateMailProviderUI() {
   }
   if (autoHintText && showCloudflareTempEmailRandomSubdomainToggle && inputTempEmailUseRandomSubdomain?.checked) {
     autoHintText.textContent = '已启用随机子域名：扩展会按当前选中的 Temp 域名提交，并额外携带 enableRandomSubdomain；是否生效取决于后端 RANDOM_SUBDOMAIN_DOMAINS 配置。';
+  }
+  if (autoHintText && showCloudflareTempEmailFixedSubdomainPrefix && inputTempEmailUseFixedSubdomain?.checked) {
+    const { activeDomain: tempEmailActiveDomain } = getCloudflareTempEmailDomainsFromState();
+    const effectiveDomain = buildCloudflareTempEmailEffectiveDomainValue(
+      selectTempEmailDomain?.value || tempEmailActiveDomain,
+      inputTempEmailSubdomainPrefix?.value || '',
+      { requirePrefix: true }
+    );
+    autoHintText.textContent = effectiveDomain
+      ? `已启用固定子域名：本次会向后端提交 ${effectiveDomain}，后端需开启 ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH。`
+      : '已启用固定子域名：请填写有效的子域前缀；后端需开启 ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH。';
   }
   if (autoHintText && useIcloudProvider && showIcloudForwardMailProvider) {
     const forwardProvider = normalizeIcloudForwardMailProvider(icloudForwardMailProviderValue);
@@ -16508,9 +16567,34 @@ inputTempEmailReceiveMailbox.addEventListener('blur', () => {
 });
 
 inputTempEmailUseRandomSubdomain?.addEventListener('change', () => {
+  if (inputTempEmailUseRandomSubdomain.checked && inputTempEmailUseFixedSubdomain) {
+    inputTempEmailUseFixedSubdomain.checked = false;
+  }
   updateMailProviderUI();
   clearRegistrationEmail({ silent: true }).catch(() => { });
   markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputTempEmailUseFixedSubdomain?.addEventListener('change', () => {
+  if (inputTempEmailUseFixedSubdomain.checked && inputTempEmailUseRandomSubdomain) {
+    inputTempEmailUseRandomSubdomain.checked = false;
+  }
+  updateMailProviderUI();
+  clearRegistrationEmail({ silent: true }).catch(() => { });
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputTempEmailSubdomainPrefix?.addEventListener('input', () => {
+  updateMailProviderUI();
+  clearRegistrationEmail({ silent: true }).catch(() => { });
+  markSettingsDirty(true);
+  scheduleSettingsAutoSave();
+});
+inputTempEmailSubdomainPrefix?.addEventListener('blur', () => {
+  inputTempEmailSubdomainPrefix.value = normalizeCloudflareTempEmailSubdomainPrefixValue(inputTempEmailSubdomainPrefix.value);
+  updateMailProviderUI();
   saveSettings({ silent: true }).catch(() => { });
 });
 
@@ -17689,13 +17773,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         inputTempEmailReceiveMailbox.value = message.payload.cloudflareTempEmailReceiveMailbox || '';
       }
       if (message.payload.cloudflareTempEmailUseRandomSubdomain !== undefined && inputTempEmailUseRandomSubdomain) {
-        inputTempEmailUseRandomSubdomain.checked = Boolean(message.payload.cloudflareTempEmailUseRandomSubdomain);
+        inputTempEmailUseRandomSubdomain.checked = Boolean(message.payload.cloudflareTempEmailUseRandomSubdomain)
+          && !Boolean(message.payload.cloudflareTempEmailUseFixedSubdomain ?? latestState?.cloudflareTempEmailUseFixedSubdomain);
+      }
+      if (message.payload.cloudflareTempEmailUseFixedSubdomain !== undefined && inputTempEmailUseFixedSubdomain) {
+        inputTempEmailUseFixedSubdomain.checked = Boolean(message.payload.cloudflareTempEmailUseFixedSubdomain);
+        if (inputTempEmailUseFixedSubdomain.checked && inputTempEmailUseRandomSubdomain) {
+          inputTempEmailUseRandomSubdomain.checked = false;
+        }
+      }
+      if (message.payload.cloudflareTempEmailSubdomainPrefix !== undefined && inputTempEmailSubdomainPrefix) {
+        inputTempEmailSubdomainPrefix.value = normalizeCloudflareTempEmailSubdomainPrefixValue(
+          message.payload.cloudflareTempEmailSubdomainPrefix || ''
+        );
       }
       if (message.payload.cloudflareTempEmailDomain !== undefined || message.payload.cloudflareTempEmailDomains !== undefined) {
         renderCloudflareTempEmailDomainOptions(message.payload.cloudflareTempEmailDomain || latestState?.cloudflareTempEmailDomain || '');
       }
       if (
         message.payload.cloudflareTempEmailUseRandomSubdomain !== undefined
+        || message.payload.cloudflareTempEmailUseFixedSubdomain !== undefined
+        || message.payload.cloudflareTempEmailSubdomainPrefix !== undefined
         || message.payload.cloudflareTempEmailLookupMode !== undefined
         || message.payload.cloudflareTempEmailDomain !== undefined
         || message.payload.cloudflareTempEmailDomains !== undefined
