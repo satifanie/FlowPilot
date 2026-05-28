@@ -4242,8 +4242,11 @@ async function setState(updates) {
   }
 }
 
-async function setPersistentSettings(updates) {
-  const currentSettings = await getPersistedSettings();
+async function setPersistentSettings(updates, options = {}) {
+  const replaceExisting = Boolean(options?.replaceExisting || options?.replace);
+  const currentSettings = replaceExisting
+    ? buildPersistentSettingsPayload({}, { fillDefaults: true })
+    : await getPersistedSettings();
   const nextUpdates = updates && typeof updates === 'object' && !Array.isArray(updates)
     ? updates
     : {};
@@ -4270,11 +4273,26 @@ async function setPersistentSettings(updates) {
         activeFlowId: currentSettings?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID,
       }
     );
-    mergedSettingsState = isPlainObjectValue(nextUpdates.settingsState)
-      ? (typeof settingsSchemaApi.mergeSettingsState === 'function'
-        ? settingsSchemaApi.mergeSettingsState(currentSettingsState, nextUpdates.settingsState)
-        : nextUpdates.settingsState)
-      : currentSettingsState;
+    if (isPlainObjectValue(nextUpdates.settingsState)) {
+      mergedSettingsState = replaceExisting
+        ? settingsSchemaApi.normalizeSettingsState({
+          activeFlowId: nextUpdates.activeFlowId
+            || nextUpdates.settingsState.activeFlowId
+            || currentSettings?.activeFlowId
+            || DEFAULT_ACTIVE_FLOW_ID,
+          settingsState: nextUpdates.settingsState,
+        }, {
+          activeFlowId: nextUpdates.activeFlowId
+            || nextUpdates.settingsState.activeFlowId
+            || currentSettings?.activeFlowId
+            || DEFAULT_ACTIVE_FLOW_ID,
+        })
+        : (typeof settingsSchemaApi.mergeSettingsState === 'function'
+          ? settingsSchemaApi.mergeSettingsState(currentSettingsState, nextUpdates.settingsState)
+          : nextUpdates.settingsState);
+    } else {
+      mergedSettingsState = currentSettingsState;
+    }
     mergedSettingsState = mergeSettingsStatePatch(
       mergedSettingsState,
       buildSettingsStatePatchFromFlatUpdates(explicitFlatUpdates)
@@ -4303,7 +4321,16 @@ async function setPersistentSettings(updates) {
       ? buildPersistedSettingsStoragePayload(persistedUpdates)
       : persistedUpdates;
     if (hasSchemaApi && chrome.storage?.local?.remove) {
-      await chrome.storage.local.remove(SETTINGS_SCHEMA_VIEW_KEYS);
+      const removedKeys = replaceExisting
+        ? Array.from(new Set([
+          ...PERSISTED_SETTING_KEYS,
+          ...PERSISTED_SETTINGS_SCHEMA_KEYS,
+          ...SETTINGS_SCHEMA_VIEW_KEYS,
+          ...LEGACY_AUTO_STEP_DELAY_KEYS,
+          ...LEGACY_VERIFICATION_RESEND_COUNT_KEYS,
+        ]))
+        : SETTINGS_SCHEMA_VIEW_KEYS;
+      await chrome.storage.local.remove(removedKeys);
     }
     await chrome.storage.local.set(storagePayload);
   }
@@ -4353,7 +4380,10 @@ async function importSettingsBundle(configBundle) {
     defaultFlowId: DEFAULT_ACTIVE_FLOW_ID,
   }) || null;
   const importedSettingsSource = typeof settingsImporter?.importSettings === 'function'
-    ? settingsImporter.importSettings(configBundle.settings)
+    ? {
+      ...configBundle.settings,
+      ...settingsImporter.importSettings(configBundle.settings),
+    }
     : configBundle.settings;
   const importedSettings = buildPersistentSettingsPayload(importedSettingsSource, {
     fillDefaults: true,
@@ -4384,7 +4414,7 @@ async function importSettingsBundle(configBundle) {
     });
   }
 
-  const persistedSettings = await setPersistentSettings(importedSettings) || importedSettings;
+  const persistedSettings = await setPersistentSettings(importedSettings, { replaceExisting: true }) || importedSettings;
 
   const sessionUpdates = {
     ...persistedSettings,

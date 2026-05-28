@@ -752,3 +752,57 @@ function getRemovedKeys() {
   assert.equal(Object.prototype.hasOwnProperty.call(write, 'panelMode'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(write, 'ipProxyMode'), false);
 });
+
+test('setPersistentSettings replace mode does not retain previous non-schema settings', async () => {
+  const api = buildHarness(`
+const persistedWrites = [];
+const removedKeys = [];
+const chrome = {
+  storage: {
+    local: {
+      async get() {
+        throw new Error('replace mode should not read existing settings');
+      },
+      async remove(keys) {
+        removedKeys.push(...(Array.isArray(keys) ? keys : [keys]));
+      },
+      async set(payload) {
+        persistedWrites.push(JSON.parse(JSON.stringify(payload)));
+      },
+    },
+  },
+};
+function getPersistedWrites() {
+  return persistedWrites;
+}
+function getRemovedKeys() {
+  return removedKeys;
+}
+`);
+
+  const persisted = await api.setPersistentSettings({
+    activeFlowId: 'kiro',
+    targetId: 'kiro-rs',
+    mailProvider: 'hotmail',
+    ipProxyEnabled: true,
+    ipProxyMode: 'api',
+    kiroRsUrl: 'https://kiro.example.com/admin',
+    kiroRsKey: 'imported-key',
+  }, { replaceExisting: true });
+  const write = api.getPersistedWrites().at(-1);
+
+  assert.equal(persisted.activeFlowId, 'kiro');
+  assert.equal(persisted.targetId, 'kiro-rs');
+  assert.equal(persisted.mailProvider, 'hotmail');
+  assert.equal(persisted.ipProxyEnabled, true);
+  assert.equal(persisted.ipProxyMode, 'api');
+  assert.equal(persisted.kiroRsUrl, 'https://kiro.example.com/admin');
+  assert.equal(persisted.kiroRsKey, 'imported-key');
+  assert.equal(write.settingsState.activeFlowId, 'kiro');
+  assert.equal(write.settingsState.services.email.provider, 'hotmail');
+  assert.equal(write.settingsState.services.proxy.mode, 'api');
+  assert.equal(write.settingsState.flows.kiro.targets['kiro-rs'].apiKey, 'imported-key');
+  assert.ok(api.getRemovedKeys().includes('settingsState'));
+  assert.ok(api.getRemovedKeys().includes('mailProvider'));
+  assert.ok(api.getRemovedKeys().includes('kiroRsKey'));
+});

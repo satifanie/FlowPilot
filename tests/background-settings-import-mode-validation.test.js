@@ -293,3 +293,153 @@ return {
   assert.equal(api.getPersistedUpdates().settingsSchemaVersion, 5);
   assert.equal(api.getPersistedUpdates().settingsState.flows.kiro.targets['kiro-rs'].apiKey, 'imported-key');
 });
+
+test('importSettingsBundle keeps exported non-schema settings while applying legacy schema migration', async () => {
+  const api = new Function(`
+const SETTINGS_EXPORT_SCHEMA_VERSION = 1;
+const DEFAULT_REGISTRATION_EMAIL_STATE = { emailHistory: [] };
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+let importerInput = null;
+let payloadInput = null;
+let persistedUpdates = null;
+let persistOptions = null;
+let currentState = {
+  activeFlowId: 'openai',
+  nodeStatuses: {},
+};
+const self = {
+  MultiPageFlowRegistry: {
+    DEFAULT_FLOW_ID: 'openai',
+  },
+  MultiPageLegacySettingsImporter: {
+    createSettingsImporter() {
+      return {
+        importSettings(settings = {}) {
+          importerInput = JSON.parse(JSON.stringify(settings));
+          return {
+            settingsSchemaVersion: 5,
+            settingsState: {
+              schemaVersion: 5,
+              activeFlowId: 'kiro',
+              services: {
+                account: { customPassword: 'schema-password' },
+                email: { provider: 'hotmail' },
+                proxy: { enabled: true, provider: '711proxy', mode: 'api' },
+              },
+              flows: {
+                openai: {
+                  selectedTargetId: 'sub2api',
+                  targets: {},
+                  signup: {
+                    signupMethod: 'email',
+                    phoneVerificationEnabled: false,
+                    phoneSignupReloginAfterBindEmailEnabled: false,
+                  },
+                  plus: {
+                    plusModeEnabled: false,
+                    plusPaymentMethod: 'paypal',
+                    plusAccountAccessStrategy: 'oauth',
+                  },
+                  autoRun: {
+                    stepExecutionRange: { enabled: false, fromStep: 1, toStep: 11 },
+                  },
+                },
+                kiro: {
+                  selectedTargetId: 'kiro-rs',
+                  targets: {
+                    'kiro-rs': {
+                      baseUrl: 'https://kiro.example.com/admin',
+                      apiKey: 'schema-key',
+                    },
+                  },
+                  autoRun: {
+                    stepExecutionRange: { enabled: true, fromStep: 2, toStep: 9 },
+                  },
+                },
+              },
+            },
+          };
+        },
+      };
+    },
+  },
+};
+async function ensureManualInteractionAllowed() {
+  return currentState;
+}
+function buildPersistentSettingsPayload(settings = {}) {
+  payloadInput = JSON.parse(JSON.stringify(settings));
+  return { ...settings };
+}
+function validateModeSwitchState() {
+  return { normalizedUpdates: {} };
+}
+function resolveSignupMethod(state = {}) {
+  return String(state?.signupMethod || '').trim().toLowerCase() === 'phone' ? 'phone' : 'email';
+}
+function getSettingsSchemaApi() {
+  return null;
+}
+async function setPersistentSettings(updates, options = {}) {
+  persistedUpdates = JSON.parse(JSON.stringify(updates));
+  persistOptions = { ...options };
+  return updates;
+}
+async function setState(updates) {
+  currentState = { ...currentState, ...updates };
+}
+function broadcastDataUpdate() {}
+async function getState() {
+  return currentState;
+}
+${extractFunction('importSettingsBundle')}
+return {
+  importSettingsBundle,
+  getImporterInput: () => importerInput,
+  getPayloadInput: () => payloadInput,
+  getPersistedUpdates: () => persistedUpdates,
+  getPersistOptions: () => persistOptions,
+};
+`)();
+
+  await api.importSettingsBundle({
+    schemaVersion: 1,
+    settings: {
+      activeFlowId: 'openai',
+      targetId: 'sub2api',
+      cloudflareTempEmailBaseUrl: 'https://mail.example.com',
+      cloudflareTempEmailAdminAuth: 'admin-secret',
+      cloudMailToken: 'cloud-token',
+      gopayHelperApiKey: 'gpc-key',
+      heroSmsApiKey: 'hero-key',
+      hotmailAccounts: [
+        { id: 'hotmail-1', email: 'owner@example.com', password: 'mail-pass' },
+      ],
+      ipProxyServiceProfiles: {
+        '711proxy': {
+          mode: 'api',
+          apiUrl: 'https://proxy.example.com',
+        },
+      },
+      paypalAccounts: [
+        { id: 'paypal-1', email: 'paypal@example.com', password: 'paypal-pass' },
+      ],
+    },
+  });
+
+  assert.equal(api.getImporterInput().cloudflareTempEmailAdminAuth, 'admin-secret');
+  assert.equal(api.getPayloadInput().settingsState.activeFlowId, 'kiro');
+  assert.equal(api.getPayloadInput().cloudflareTempEmailBaseUrl, 'https://mail.example.com');
+  assert.equal(api.getPayloadInput().cloudflareTempEmailAdminAuth, 'admin-secret');
+  assert.equal(api.getPayloadInput().cloudMailToken, 'cloud-token');
+  assert.equal(api.getPayloadInput().gopayHelperApiKey, 'gpc-key');
+  assert.equal(api.getPayloadInput().heroSmsApiKey, 'hero-key');
+  assert.deepEqual(api.getPayloadInput().hotmailAccounts, [
+    { id: 'hotmail-1', email: 'owner@example.com', password: 'mail-pass' },
+  ]);
+  assert.equal(api.getPayloadInput().ipProxyServiceProfiles['711proxy'].apiUrl, 'https://proxy.example.com');
+  assert.equal(api.getPayloadInput().paypalAccounts[0].email, 'paypal@example.com');
+  assert.equal(api.getPersistedUpdates().settingsState.flows.kiro.targets['kiro-rs'].apiKey, 'schema-key');
+  assert.equal(api.getPersistedUpdates().cloudflareTempEmailAdminAuth, 'admin-secret');
+  assert.deepEqual(api.getPersistOptions(), { replaceExisting: true });
+});
