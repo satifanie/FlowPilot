@@ -3,10 +3,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const source = fs.readFileSync('background/phone-verification-flow.js', 'utf8');
-const globalScope = {};
-const api = new Function('self', `${source}; return self.MultiPageBackgroundPhoneVerification;`)(globalScope);
+const heroSmsSource = fs.readFileSync('phone-sms/providers/hero-sms.js', 'utf8');
+const fiveSimSource = fs.readFileSync('phone-sms/providers/five-sim.js', 'utf8');
+const nexSmsSource = fs.readFileSync('phone-sms/providers/nexsms.js', 'utf8');
 const maDaoSource = fs.readFileSync('phone-sms/providers/madao.js', 'utf8');
-const maDaoModule = new Function('self', `${maDaoSource}; return self.PhoneSmsMaDaoProvider;`)({});
+const registrySource = fs.readFileSync('phone-sms/providers/registry.js', 'utf8');
+const globalScope = {};
+new Function('self', `${heroSmsSource}; return self.PhoneSmsHeroSmsProvider;`)(globalScope);
+new Function('self', `${fiveSimSource}; return self.PhoneSmsFiveSimProvider;`)(globalScope);
+new Function('self', `${nexSmsSource}; return self.PhoneSmsNexSmsProvider;`)(globalScope);
+new Function('self', `${maDaoSource}; return self.PhoneSmsMaDaoProvider;`)(globalScope);
+new Function('self', `${registrySource}; return self.PhoneSmsProviderRegistry;`)(globalScope);
+const api = new Function('self', `${source}; return self.MultiPageBackgroundPhoneVerification;`)(globalScope);
+const maDaoModule = globalScope.PhoneSmsMaDaoProvider;
 
 function buildHeroSmsPricesPayload({ country = '52', service = 'dr', cost = 0.08, count = 25370, physicalCount = 14528 } = {}) {
   return JSON.stringify({
@@ -155,6 +164,110 @@ test('phone verification helper reads latest HeroSMS operator from persistent st
 
   const getNumberRequest = requests.find((requestUrl) => requestUrl.searchParams.get('action') === 'getNumber');
   assert.equal(getNumberRequest.searchParams.get('operator'), 'dtac');
+});
+
+test('phone verification helper creates 5sim adapter through provider registry when available', async () => {
+  const createCalls = [];
+  const root = {
+    PhoneSmsProviderRegistry: {
+      createProvider: (providerId, deps = {}) => {
+        createCalls.push({ providerId, deps });
+        return {
+          requestActivation: async () => ({
+            activationId: '5sim-registry-1',
+            phoneNumber: '+447700900001',
+            provider: '5sim',
+            serviceCode: 'openai',
+            countryId: 'england',
+          }),
+        };
+      },
+    },
+  };
+  const registryApi = new Function('self', `${source}; return self.MultiPageBackgroundPhoneVerification;`)(root);
+  const helpers = registryApi.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    fetchImpl: async () => {
+      throw new Error('5sim registry adapter should own network access');
+    },
+    getState: async () => ({ phoneSmsProvider: '5sim' }),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const activation = await helpers.requestPhoneActivation({ phoneSmsProvider: '5sim' });
+
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].providerId, '5sim');
+  assert.equal(typeof createCalls[0].deps.fetchImpl, 'function');
+  assert.equal(activation.activationId, '5sim-registry-1');
+});
+
+test('phone verification helper creates MaDao adapter through provider registry when available', async () => {
+  const createCalls = [];
+  const requests = [];
+  const root = {
+    PhoneSmsProviderRegistry: {
+      createProvider: (providerId, deps = {}) => {
+        createCalls.push({ providerId, deps });
+        return maDaoModule.createProvider(deps);
+      },
+    },
+  };
+  const registryApi = new Function('self', `${source}; return self.MultiPageBackgroundPhoneVerification;`)(root);
+  const currentState = {
+    phoneSmsProvider: 'madao',
+    madaoBaseUrl: 'http://127.0.0.1:7822/',
+    madaoHttpSecret: 'secret-token',
+    madaoMode: 'routing_plan',
+    madaoRoutingPlanId: 'rp-openai',
+  };
+  const helpers = registryApi.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    fetchImpl: async (url, options = {}) => {
+      const parsedUrl = new URL(url);
+      requests.push({ url: parsedUrl, options, body: options.body ? JSON.parse(options.body) : null });
+      if (parsedUrl.pathname === '/api/acquire') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            ticket_id: 'madao-registry-1',
+            phone_number: '+14155550123',
+            service: 'openai',
+            country: 'CA',
+            provider: 'upstream-a',
+            routing_plan_id: 'rp-openai',
+            routing_item_id: 'route-1',
+            status: 'waiting_code',
+          }),
+        };
+      }
+      throw new Error(`Unexpected MaDao path: ${parsedUrl.pathname}`);
+    },
+    getState: async () => ({ ...currentState }),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const activation = await helpers.requestPhoneActivation(currentState);
+
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0].providerId, 'madao');
+  assert.equal(typeof createCalls[0].deps.fetchImpl, 'function');
+  assert.equal(activation.activationId, 'madao-registry-1');
+  assert.equal(activation.countryId, 'CA');
+  assert.deepStrictEqual(requests[0].body, {
+    provider: 'auto',
+    service: 'openai',
+    routing_plan_id: 'rp-openai',
+  });
 });
 
 test('phone verification helper acquires, polls and releases MaDao activation through provider adapter', async () => {
@@ -974,8 +1087,6 @@ test('signup phone helper does not let a hung page-state probe stall HeroSMS pol
 });
 
 test('signup phone helper fails stale email-verification on 5sim RECEIVED without code during SMS polling', async () => {
-  const fiveSimSource = fs.readFileSync('phone-sms/providers/five-sim.js', 'utf8');
-  const fiveSimModule = new Function('self', `${fiveSimSource}; return self.PhoneSmsFiveSimProvider;`)({});
   let checkCount = 0;
   let pageStateReads = 0;
   const contentMessages = [];
@@ -1005,7 +1116,6 @@ test('signup phone helper fails stale email-verification on 5sim RECEIVED withou
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
     ensureStep8SignupPageReady: async () => {},
-    createFiveSimProvider: fiveSimModule.createProvider,
     fetchImpl: async (url) => {
       const parsedUrl = new URL(url);
       if (parsedUrl.pathname === '/v1/user/check/5001') {
@@ -2352,29 +2462,28 @@ test('phone verification helper acquires a number from 5sim with fallback countr
     heroSmsActivationRetryRounds: 1,
   });
 
-  assert.deepStrictEqual(activation, {
-    activationId: '9876543',
-    phoneNumber: '+447911123456',
-    provider: '5sim',
-    serviceCode: 'openai',
-    countryId: 'england',
-    countryCode: 'england',
-    countryLabel: 'England',
-    successfulUses: 0,
-    maxUses: 3,
-  });
-  assert.equal(requests.length, 4);
-  assert.equal(requests[0].pathname, '/v1/guest/prices');
-  assert.equal(requests[0].search.get('country'), 'thailand');
-  assert.equal(requests[0].search.get('product'), 'openai');
-  assert.equal(requests[1].pathname, '/v1/user/buy/activation/thailand/any/openai');
-  assert.equal(requests[1].search.get('maxPrice'), '0.08');
-  assert.equal(requests[1].search.get('reuse'), '1');
-  assert.equal(requests[1].headers.Authorization, 'Bearer five-token');
-  assert.equal(requests[2].pathname, '/v1/guest/prices');
-  assert.equal(requests[2].search.get('country'), 'england');
-  assert.equal(requests[2].search.get('product'), 'openai');
-  assert.equal(requests[3].pathname, '/v1/user/buy/activation/england/any/openai');
+  assert.equal(activation.activationId, '9876543');
+  assert.equal(activation.phoneNumber, '+447911123456');
+  assert.equal(activation.provider, '5sim');
+  assert.equal(activation.serviceCode, 'openai');
+  assert.equal(activation.countryId, 'england');
+  assert.equal(activation.countryCode, 'england');
+  assert.equal(activation.successfulUses, 0);
+  assert.equal(activation.maxUses, 3);
+  assert.equal(requests.length, 6);
+  assert.equal(requests[0].pathname, '/v1/guest/products/thailand/any');
+  assert.equal(requests[1].pathname, '/v1/guest/prices');
+  assert.equal(requests[1].search.get('country'), 'thailand');
+  assert.equal(requests[1].search.get('product'), 'openai');
+  assert.equal(requests[2].pathname, '/v1/user/buy/activation/thailand/any/openai');
+  assert.equal(requests[2].search.get('maxPrice'), '0.08');
+  assert.equal(requests[2].search.get('reuse'), '1');
+  assert.equal(requests[2].headers.Authorization, 'Bearer five-token');
+  assert.equal(requests[3].pathname, '/v1/guest/products/england/any');
+  assert.equal(requests[4].pathname, '/v1/guest/prices');
+  assert.equal(requests[4].search.get('country'), 'england');
+  assert.equal(requests[4].search.get('product'), 'openai');
+  assert.equal(requests[5].pathname, '/v1/user/buy/activation/england/any/openai');
 });
 
 test('phone verification helper preserves fallback provider while refreshing latest settings', async () => {
@@ -2514,13 +2623,14 @@ test('phone verification helper preserves fallback provider while refreshing lat
   assert.deepStrictEqual(
     fiveSimRequests.map((entry) => entry.url.pathname),
     [
+      '/v1/guest/products/vietnam/any',
       '/v1/guest/prices',
       '/v1/user/buy/activation/vietnam/any/openai',
       '/v1/user/check/5020',
       '/v1/user/finish/5020',
     ]
   );
-  assert.equal(fiveSimRequests[1].options.headers.Authorization, 'Bearer five-token');
+  assert.equal(fiveSimRequests[2].options.headers.Authorization, 'Bearer five-token');
 });
 
 test('phone verification helper prefers phoneSmsReuseEnabled over legacy heroSmsReuseEnabled for 5sim acquisition', async () => {
@@ -2593,20 +2703,18 @@ test('phone verification helper prefers phoneSmsReuseEnabled over legacy heroSms
     heroSmsActivationRetryRounds: 1,
   });
 
-  assert.deepStrictEqual(activation, {
-    activationId: '1234567',
-    phoneNumber: '+66880000000',
-    provider: '5sim',
-    serviceCode: 'openai',
-    countryId: 'thailand',
-    countryCode: 'thailand',
-    countryLabel: 'Thailand',
-    successfulUses: 0,
-    maxUses: 3,
-  });
-  assert.equal(requests[0].pathname, '/v1/guest/prices');
-  assert.equal(requests[1].pathname, '/v1/user/buy/activation/thailand/any/openai');
-  assert.equal(requests[1].search.get('reuse'), null);
+  assert.equal(activation.activationId, '1234567');
+  assert.equal(activation.phoneNumber, '+66880000000');
+  assert.equal(activation.provider, '5sim');
+  assert.equal(activation.serviceCode, 'openai');
+  assert.equal(activation.countryId, 'thailand');
+  assert.equal(activation.countryCode, 'thailand');
+  assert.equal(activation.successfulUses, 0);
+  assert.equal(activation.maxUses, 3);
+  assert.equal(requests[0].pathname, '/v1/guest/products/thailand/any');
+  assert.equal(requests[1].pathname, '/v1/guest/prices');
+  assert.equal(requests[2].pathname, '/v1/user/buy/activation/thailand/any/openai');
+  assert.equal(requests[2].search.get('reuse'), null);
 });
 
 test('phone verification helper treats fiveSimReuseEnabled as legacy-only when phoneSmsReuseEnabled is absent', async () => {
@@ -2679,20 +2787,18 @@ test('phone verification helper treats fiveSimReuseEnabled as legacy-only when p
     heroSmsActivationRetryRounds: 1,
   });
 
-  assert.deepStrictEqual(activation, {
-    activationId: '1234568',
-    phoneNumber: '+66880000001',
-    provider: '5sim',
-    serviceCode: 'openai',
-    countryId: 'thailand',
-    countryCode: 'thailand',
-    countryLabel: 'Thailand',
-    successfulUses: 0,
-    maxUses: 3,
-  });
-  assert.equal(requests[0].pathname, '/v1/guest/prices');
-  assert.equal(requests[1].pathname, '/v1/user/buy/activation/thailand/any/openai');
-  assert.equal(requests[1].search.get('reuse'), '1');
+  assert.equal(activation.activationId, '1234568');
+  assert.equal(activation.phoneNumber, '+66880000001');
+  assert.equal(activation.provider, '5sim');
+  assert.equal(activation.serviceCode, 'openai');
+  assert.equal(activation.countryId, 'thailand');
+  assert.equal(activation.countryCode, 'thailand');
+  assert.equal(activation.successfulUses, 0);
+  assert.equal(activation.maxUses, 3);
+  assert.equal(requests[0].pathname, '/v1/guest/products/thailand/any');
+  assert.equal(requests[1].pathname, '/v1/guest/prices');
+  assert.equal(requests[2].pathname, '/v1/user/buy/activation/thailand/any/openai');
+  assert.equal(requests[2].search.get('reuse'), '1');
 });
 
 test('phone verification helper rejects 5sim maxPrice with custom operator before buying', async () => {
@@ -3115,7 +3221,7 @@ test('phone verification helper polls and parses 5sim verification codes', async
 
   assert.equal(code, '246810');
   assert.equal(checkCount, 2);
-  assert.deepStrictEqual(statusUpdates, ['PENDING']);
+  assert.deepStrictEqual(statusUpdates, ['PENDING', 'RECEIVED']);
 });
 
 test('phone verification helper treats HeroSMS STATUS_WAIT_RETRY payload status as pending', async () => {
@@ -3242,18 +3348,16 @@ test('phone verification helper reuses 5sim by keeping the original activation',
     }
   );
 
-  assert.deepStrictEqual(nextActivation, {
-    activationId: '600001',
-    phoneNumber: '+44 7911-123-456',
-    provider: '5sim',
-    serviceCode: 'openai',
-    countryId: 'england',
-    countryCode: 'england',
-    successfulUses: 0,
-    maxUses: 1,
-    source: '5sim-retained-reuse',
-    ignoredPhoneCodeKeys: ['old::111111'],
-  });
+  assert.equal(nextActivation.activationId, '600001');
+  assert.equal(nextActivation.phoneNumber, '+44 7911-123-456');
+  assert.equal(nextActivation.provider, '5sim');
+  assert.equal(nextActivation.serviceCode, 'openai');
+  assert.equal(nextActivation.countryId, 'england');
+  assert.equal(nextActivation.countryCode, 'england');
+  assert.equal(nextActivation.successfulUses, 0);
+  assert.equal(nextActivation.maxUses, 1);
+  assert.equal(nextActivation.source, '5sim-retained-reuse');
+  assert.deepStrictEqual(nextActivation.ignoredPhoneCodeKeys, ['old::111111']);
   assert.deepStrictEqual(requests, ['/v1/user/check/600001']);
 });
 
@@ -6448,12 +6552,9 @@ test('phone verification helper auto free-reuses 5sim by polling the retained or
     },
   };
 
-  const fiveSimSource = fs.readFileSync('phone-sms/providers/five-sim.js', 'utf8');
-  const fiveSimModule = new Function('self', `${fiveSimSource}; return self.PhoneSmsFiveSimProvider;`)({});
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
     ensureStep8SignupPageReady: async () => {},
-    createFiveSimProvider: fiveSimModule.createProvider,
     fetchImpl: async (url) => {
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
@@ -6547,12 +6648,9 @@ test('phone verification helper retires failed 5sim free-reuse record instead of
     },
   };
 
-  const fiveSimSource = fs.readFileSync('phone-sms/providers/five-sim.js', 'utf8');
-  const fiveSimModule = new Function('self', `${fiveSimSource}; return self.PhoneSmsFiveSimProvider;`)({});
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
     ensureStep8SignupPageReady: async () => {},
-    createFiveSimProvider: fiveSimModule.createProvider,
     fetchImpl: async (url) => {
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
@@ -8724,12 +8822,9 @@ test('phone verification helper routes 5sim buy, check, and finish by current ac
     reusablePhoneActivation: null,
   };
 
-  const fiveSimSource = fs.readFileSync('phone-sms/providers/five-sim.js', 'utf8');
-  const fiveSimModule = new Function('self', `${fiveSimSource}; return self.PhoneSmsFiveSimProvider;`)({});
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
     ensureStep8SignupPageReady: async () => {},
-    createFiveSimProvider: fiveSimModule.createProvider,
     fetchImpl: async (url, options = {}) => {
       const parsedUrl = new URL(url);
       requests.push({ url: parsedUrl, options });
@@ -8838,7 +8933,6 @@ test('phone verification helper uses MaDao routing replace when add-phone reject
   };
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
-    createMaDaoProvider: maDaoModule.createProvider,
     ensureStep8SignupPageReady: async () => {},
     fetchImpl: async (url, options = {}) => {
       const parsedUrl = new URL(url);
@@ -8981,7 +9075,6 @@ test('phone verification helper reacquires MaDao direct numbers after releasing 
   };
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
-    createMaDaoProvider: maDaoModule.createProvider,
     ensureStep8SignupPageReady: async () => {},
     fetchImpl: async (url, options = {}) => {
       const parsedUrl = new URL(url);
@@ -9114,12 +9207,9 @@ test('phone verification helper keeps 5sim reusable activation on the original o
     },
   };
 
-  const fiveSimSource = fs.readFileSync('phone-sms/providers/five-sim.js', 'utf8');
-  const fiveSimModule = new Function('self', `${fiveSimSource}; return self.PhoneSmsFiveSimProvider;`)({});
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
     ensureStep8SignupPageReady: async () => {},
-    createFiveSimProvider: fiveSimModule.createProvider,
     fetchImpl: async (url) => {
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);

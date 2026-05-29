@@ -371,6 +371,20 @@
   }
 
   function resolveCountryCandidates(state = {}) {
+    const orderedCountries = normalizeFiveSimCountryFallback(state.fiveSimCountryOrder);
+    if (orderedCountries.length) {
+      const primaryCountryId = normalizeFiveSimCountryId(state.fiveSimCountryId, '');
+      return orderedCountries.map((entry) => {
+        const id = normalizeFiveSimCountryId(entry.id, '');
+        return {
+          id,
+          label: primaryCountryId && id === primaryCountryId
+            ? formatFiveSimCountryLabel(id, state.fiveSimCountryLabel || entry.label || id, id)
+            : formatFiveSimCountryLabel(id, entry.label || id, id),
+        };
+      });
+    }
+
     const primary = resolveCountryConfig(state);
     const fallbackList = normalizeFiveSimCountryFallback(state.fiveSimCountryFallback);
     const seen = new Set([primary.id]);
@@ -496,6 +510,8 @@
   async function resolvePricePlan(state = {}, countryConfig = resolveCountryConfig(state), deps = {}) {
     const userLimitText = normalizeFiveSimMaxPrice(state.fiveSimMaxPrice);
     const userLimit = userLimitText ? Number(userLimitText) : null;
+    const userMinText = normalizeFiveSimMaxPrice(state.fiveSimMinPrice);
+    const userMinLimit = userMinText ? Number(userMinText) : null;
     let priceCandidates = [];
 
     try {
@@ -526,19 +542,24 @@
     priceCandidates = buildSortedUniquePriceCandidates(priceCandidates);
 
     const minCatalogPrice = priceCandidates.length > 0 ? priceCandidates[0] : null;
+    const rangeFilteredPrices = priceCandidates.filter((price) => (
+      (userMinLimit === null || price >= userMinLimit)
+      && (userLimit === null || price <= userLimit)
+    ));
     if (userLimit !== null) {
-      const bounded = priceCandidates.filter((price) => price <= userLimit);
+      const bounded = rangeFilteredPrices;
       return {
         prices: bounded.length > 0 ? [userLimit, ...bounded.filter((price) => price !== userLimit)] : [userLimit],
         userLimit,
+        userMinLimit,
         minCatalogPrice,
       };
     }
 
-    if (priceCandidates.length > 0) {
-      return { prices: priceCandidates, userLimit: null, minCatalogPrice };
+    if (rangeFilteredPrices.length > 0) {
+      return { prices: rangeFilteredPrices, userLimit: null, userMinLimit, minCatalogPrice };
     }
-    return { prices: [null], userLimit: null, minCatalogPrice: null };
+    return { prices: [null], userLimit: null, userMinLimit, minCatalogPrice };
   }
 
   function normalizeActivation(record, fallback = {}) {
@@ -558,6 +579,7 @@
       provider: PROVIDER_ID,
       serviceCode: DEFAULT_PRODUCT,
       countryId,
+      countryCode: countryId,
       countryLabel,
       successfulUses: Math.max(0, Math.floor(Number(record.successfulUses) || 0)),
       maxUses: Math.max(1, Math.floor(Number(record.maxUses) || DEFAULT_MAX_USES)),
@@ -594,9 +616,16 @@
 
   function assertMaxPriceCompatibleWithOperator(state = {}) {
     const maxPrice = normalizeFiveSimMaxPrice(state.fiveSimMaxPrice);
+    const minPrice = normalizeFiveSimMaxPrice(state.fiveSimMinPrice);
     const operator = normalizeFiveSimOperator(state.fiveSimOperator);
     if (maxPrice && operator !== DEFAULT_OPERATOR) {
       throw new Error('5sim 价格上限仅支持运营商为 "any" 时使用；请清空价格上限，或先把运营商切换为 any。');
+    }
+    if (minPrice && operator !== DEFAULT_OPERATOR) {
+      throw new Error('5sim 最低购买价仅支持运营商为 "any" 时使用；请清空最低购买价，或先把运营商切换为 any。');
+    }
+    if (minPrice && maxPrice && Number(minPrice) > Number(maxPrice)) {
+      throw new Error(`5sim 价格区间无效：最低购买价 ${minPrice} 高于价格上限 ${maxPrice}。`);
     }
   }
 

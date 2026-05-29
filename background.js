@@ -13828,8 +13828,6 @@ const phoneVerificationHelpers = self.MultiPageBackgroundPhoneVerification?.crea
   setState,
   sleepWithStop,
   throwIfStopped,
-  createFiveSimProvider: self.PhoneSmsFiveSimProvider?.createProvider,
-  createMaDaoProvider: self.PhoneSmsMaDaoProvider?.createProvider,
 });
 const step1Executor = self.MultiPageBackgroundStep1?.createStep1Executor({
   addLog,

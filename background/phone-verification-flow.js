@@ -29,8 +29,6 @@
       DEFAULT_NEX_SMS_COUNTRY_ORDER = [1],
       DEFAULT_NEX_SMS_SERVICE_CODE = 'ot',
       DEFAULT_HERO_SMS_REUSE_ENABLED = true,
-      createFiveSimProvider = null,
-      createMaDaoProvider = null,
       HERO_SMS_COUNTRY_ID = 52,
       HERO_SMS_COUNTRY_LABEL = 'Thailand',
       HERO_SMS_SERVICE_CODE = 'dr',
@@ -1209,13 +1207,12 @@
       return normalizePhoneSmsReuseEnabled(state);
     }
 
-    function createResolvedFiveSimProvider() {
+    function getPhoneSmsProviderAdapterForState(state = {}, providerId = normalizePhoneSmsProvider(state?.phoneSmsProvider || DEFAULT_PHONE_SMS_PROVIDER)) {
       const rootScope = typeof self !== 'undefined' ? self : globalThis;
-      const factory = createFiveSimProvider || rootScope.PhoneSmsFiveSimProvider?.createProvider;
-      if (typeof factory !== 'function') {
-        return null;
+      if (!rootScope.PhoneSmsProviderRegistry?.createProvider) {
+        throw new Error('接码平台 registry 未加载。');
       }
-      return factory({
+      return rootScope.PhoneSmsProviderRegistry.createProvider(normalizePhoneSmsProvider(providerId), {
         addLog,
         fetchImpl,
         requestTimeoutMs: DEFAULT_PHONE_REQUEST_TIMEOUT_MS,
@@ -1224,27 +1221,12 @@
       });
     }
 
-    function getFiveSimProviderForState(_state = {}) {
-      return createResolvedFiveSimProvider();
+    function getFiveSimProviderForState(state = {}) {
+      return getPhoneSmsProviderAdapterForState(state, PHONE_SMS_PROVIDER_FIVE_SIM);
     }
 
-    function createResolvedMaDaoProvider() {
-      const rootScope = typeof self !== 'undefined' ? self : globalThis;
-      const factory = createMaDaoProvider || rootScope.PhoneSmsMaDaoProvider?.createProvider;
-      if (typeof factory !== 'function') {
-        return null;
-      }
-      return factory({
-        addLog,
-        fetchImpl,
-        requestTimeoutMs: DEFAULT_PHONE_REQUEST_TIMEOUT_MS,
-        sleepWithStop,
-        throwIfStopped,
-      });
-    }
-
-    function getMaDaoAdapterForState(_state = {}) {
-      return createResolvedMaDaoProvider();
+    function getMaDaoAdapterForState(state = {}) {
+      return getPhoneSmsProviderAdapterForState(state, PHONE_SMS_PROVIDER_MADAO);
     }
 
     function normalizeFiveSimCountryId(value, fallback = 'england') {
