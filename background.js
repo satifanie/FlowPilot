@@ -1495,6 +1495,7 @@ const DEFAULT_STATE = {
   autoRunAttemptRun: 0, // 当前轮次的重试序号。
   autoRunSessionId: 0,
   autoRunRoundSummaries: [], // 自动运行轮次摘要。
+  autoRunGpcCheckoutRestartCount: 0, // 当前轮次内 GPC 回退到 step 6 的累计次数。
   autoRunTimerPlan: null, // 自动运行可恢复计时计划快照。
   autoRunCountdownAt: null,
   autoRunCountdownTitle: '',
@@ -13067,9 +13068,30 @@ function getAutoRunWorkflowNodeIds(state = {}) {
 async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   const { targetRun, totalRuns, attemptRuns, continued = false } = context;
   let postStep7RestartCount = 0;
-  let gpcCheckoutRestartCount = 0;
   let plusCheckoutRestartCount = 0;
   let step4RestartCount = 0;
+  const normalizeAutoRunGpcCheckoutRestartCount = (value) => {
+    const normalizedCount = Math.floor(Number(value) || 0);
+    return normalizedCount > 0 ? normalizedCount : 0;
+  };
+  let gpcCheckoutRestartCount = 0;
+  const setAutoRunGpcCheckoutRestartCount = async (value) => {
+    const normalizedCount = normalizeAutoRunGpcCheckoutRestartCount(value);
+    if (gpcCheckoutRestartCount === normalizedCount) {
+      return normalizedCount;
+    }
+    gpcCheckoutRestartCount = normalizedCount;
+    await setState({ autoRunGpcCheckoutRestartCount: normalizedCount });
+    return normalizedCount;
+  };
+  const initialAutoRunState = await getState();
+  const initialPersistedGpcCheckoutRestartCount = normalizeAutoRunGpcCheckoutRestartCount(
+    initialAutoRunState?.autoRunGpcCheckoutRestartCount
+  );
+  gpcCheckoutRestartCount = continued ? initialPersistedGpcCheckoutRestartCount : 0;
+  if (!continued && initialPersistedGpcCheckoutRestartCount > 0) {
+    await setState({ autoRunGpcCheckoutRestartCount: 0 });
+  }
   const nodeIdleRestartCounts = new Map();
   let currentStartNodeId = String(startNodeId || '').trim();
   let continueCurrentAttempt = continued;
@@ -13080,6 +13102,10 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   const plusPaymentMethodGpcHelper = typeof PLUS_PAYMENT_METHOD_GPC_HELPER === 'string'
     ? PLUS_PAYMENT_METHOD_GPC_HELPER
     : 'gpc-helper';
+  const isGpcCheckoutState = (state = {}) => (
+    normalizePlusPaymentMethodForRun(state?.plusPaymentMethod) === plusPaymentMethodGpcHelper
+    || String(state?.plusCheckoutSource || '').trim() === plusPaymentMethodGpcHelper
+  );
   const getNodeStatusForNode = (state, nodeId) => (
     String(state?.nodeStatuses?.[nodeId] || 'pending').trim() || 'pending'
   );
@@ -13422,6 +13448,12 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
     }
     try {
       await executeNodeAndWaitWithAutoRunIdleLogWatchdog(nodeId, getAutoRunNodeDelayMs(nodeId));
+      if (nodeId === 'plus-checkout-billing' && gpcCheckoutRestartCount > 0) {
+        const completedState = await getState();
+        if (isGpcCheckoutState(completedState)) {
+          await setAutoRunGpcCheckoutRestartCount(0);
+        }
+      }
       nodeIndex += 1;
     } catch (err) {
       attachFailedNode(err, nodeId, latestState);
@@ -13435,12 +13467,11 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
 
       const step = getDisplayStepForNode(nodeId, latestState);
       const nodeExecutionKey = getNodeExecutionKey(nodeId, latestState);
-      const isGpcCheckoutStep = normalizePlusPaymentMethodForRun(latestState?.plusPaymentMethod) === plusPaymentMethodGpcHelper
-        || String(latestState?.plusCheckoutSource || '').trim() === plusPaymentMethodGpcHelper;
+      const isGpcCheckoutStep = isGpcCheckoutState(latestState);
       if (isPlusCheckoutRestartStep(step, nodeExecutionKey, latestState)
         && isPlusCheckoutRestartRequiredFailure(err)) {
         if (isGpcCheckoutStep) {
-          gpcCheckoutRestartCount += 1;
+          gpcCheckoutRestartCount = await setAutoRunGpcCheckoutRestartCount(gpcCheckoutRestartCount + 1);
         } else {
           plusCheckoutRestartCount += 1;
         }

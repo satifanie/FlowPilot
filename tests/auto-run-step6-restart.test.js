@@ -191,6 +191,10 @@ const PHONE_IDENTITY_STATE_KEYS = [
   'accountIdentifier',
 ];
 
+function deepClone(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 function createDownstreamResetHarness(stepKey = '') {
   return new Function(`
 function getStepExecutionKeyForState() {
@@ -277,6 +281,9 @@ const chrome = {
     update: async () => {},
   },
 };
+function deepClone(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
 
 let remainingFailures = ${JSON.stringify(failureBudget)};
 let remainingHangs = ${JSON.stringify(hangBudget)};
@@ -297,13 +304,25 @@ async function addLog(message, level = 'info') {
 async function ensureAutoEmailReady() {}
 async function ensureResolvedSignupMethodForRun() { return 'email'; }
 async function broadcastAutoRunStatus() {}
+let currentState = {
+  stepStatuses: { 3: 'completed' },
+  mailProvider: '163',
+  logs: events.logs,
+  ...${JSON.stringify(customState)},
+};
 async function getState() {
   return {
-    stepStatuses: { 3: 'completed' },
-    mailProvider: '163',
+    ...deepClone(currentState),
     logs: events.logs,
-    ...${JSON.stringify(customState)},
   };
+}
+async function setState(updates = {}) {
+  currentState = {
+    ...currentState,
+    ...deepClone(updates),
+    logs: events.logs,
+  };
+  events.stateUpdates.push(deepClone(updates));
 }
 function getStepIdsForState() {
   return ${JSON.stringify(stepIds)};
@@ -339,7 +358,7 @@ async function invalidateDownstreamAfterStepRestart(step, options = {}) {
   events.invalidations.push({ step, options });
   const resets = getDownstreamStateResets(step, await getState());
   if (Object.keys(resets).length > 0) {
-    events.stateUpdates.push(resets);
+    await setState(resets);
   }
 }
 function cancelPendingCommands(reason = '') {
@@ -404,6 +423,37 @@ return {
   },
   getEvents() {
     return events;
+  },
+  async setState(updates = {}) {
+    await setState(updates);
+    return getState();
+  },
+  async getState() {
+    return getState();
+  },
+  async runWithContext(context = {}) {
+    await runAutoSequenceFromStep(${JSON.stringify(startStep)}, {
+      targetRun: 1,
+      totalRuns: 1,
+      attemptRuns: 1,
+      continued: false,
+      ...context,
+    });
+    return events;
+  },
+  async runWithContextAndCaptureError(context = {}) {
+    try {
+      await runAutoSequenceFromStep(${JSON.stringify(startStep)}, {
+        targetRun: 1,
+        totalRuns: 1,
+        attemptRuns: 1,
+        continued: false,
+        ...context,
+      });
+      return null;
+    } catch (error) {
+      return { error, events };
+    }
   },
 };
 `)();
@@ -1044,6 +1094,43 @@ test('auto-run parks current attempt for five minutes after every third GPC chec
   assert.equal(events.timerPlans[0].plan.mode, 'continue');
   assert.ok(/5 分钟后继续/.test(events.timerPlans[0].plan.countdownNote));
   assert.ok(events.logs.some(({ message }) => /已进入 5 分钟冷却/.test(message)));
+});
+
+test('auto-run preserves GPC checkout rebuild count across continue resume before triggering cooldown', async () => {
+  const plusGpcSteps = {
+    6: { key: 'plus-checkout-create' },
+    7: { key: 'plus-checkout-billing' },
+    10: { key: 'oauth-login' },
+    11: { key: 'fetch-login-code' },
+    12: { key: 'confirm-oauth' },
+    13: { key: 'platform-verify' },
+  };
+  const harness = createHarness({
+    startStep: 6,
+    failureStep: 7,
+    failureBudget: 3,
+    failureMessage: 'GPC_PAGE_FLOW_ENDED::步骤 7：GPC 页面任务执行错误，准备重新回到步骤 6 创建新 Checkout。最近日志：[03:25:57] ERROR 任务失败：执行错误',
+    stepDefinitions: plusGpcSteps,
+    finalOAuthChainStartStep: 10,
+    customState: {
+      stepStatuses: { 3: 'completed' },
+      plusPaymentMethod: 'gpc-helper',
+      plusCheckoutSource: 'gpc-helper',
+      autoRunSkipFailures: true,
+      autoRunRoundSummaries: [],
+      autoRunGpcCheckoutRestartCount: 2,
+    },
+  });
+
+  const result = await harness.runWithContextAndCaptureError({
+    continued: true,
+    attemptRuns: 1,
+  });
+  assert.ok(result?.error);
+  assert.match(result.error.message, /AUTO_RUN_TIMER_PARKED::/);
+  assert.equal(result.events.timerPlans.length, 1);
+  assert.equal(result.events.timerPlans[0].plan.kind, 'before_retry');
+  assert.equal((await harness.getState()).autoRunGpcCheckoutRestartCount, 3);
 });
 
 test('auto-run does not restart GPC checkout when Plus account has no free-trial eligibility', async () => {
